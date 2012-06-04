@@ -179,6 +179,9 @@ main(int argc, char **argv)
 
 		ok = rumpns_npf_table_test(verbose);
 		result("table", ok);
+
+		ok = rumpns_npf_state_test(verbose);
+		result("state", ok);
 	}
 
 	if (stream) {
