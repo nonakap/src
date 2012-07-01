@@ -122,6 +122,12 @@ void	command_dev(char *);
 void	command_consdev(char *);
 void	command_modules(char *);
 void	command_multiboot(char *);
+#if 1	/* XXX: XXXNONAKA */
+void	command_memoryread_4(char *);
+void	command_memorywrite_4(char *);
+void	command_dump_pcicfg(char *);
+void	command_write_pcicfg(char *);
+#endif	/* XXX: XXXNONAKA */
 
 const struct bootblk_command commands[] = {
 	{ "help",	command_help },
@@ -138,6 +144,12 @@ const struct bootblk_command commands[] = {
 	{ "splash",	splash_add },
 	{ "rndseed",	rnd_add },
 	{ "userconf",	userconf_add },
+#if 1	/* XXX: XXXNONAKA */
+	{ "mrd",	command_memoryread_4 },
+	{ "mwd",	command_memorywrite_4 },
+	{ "pcicfgr",	command_dump_pcicfg },
+	{ "pcicfgw",	command_write_pcicfg },
+#endif	/* XXX: XXXNONAKA */
 	{ NULL,		NULL },
 };
 
@@ -399,6 +411,12 @@ command_help(char *arg)
 	       "multiboot [xdNx:][filename] [<args>]\n"
 	       "userconf {command}\n"
 	       "rndseed {path_to_rndseed_file}\n"
+#if 1	/* XXX: XXXNONAKA start */
+	       "mrd {address} [length]\n"
+	       "mwd {address} {value}\n"
+	       "pcicfgr {bus} {device} {function}\n"
+	       "pcicfgw {bus} {device} {function} {address} {value}\n"
+#endif	/* XXX: XXXNONAKA start */
 	       "help|?\n"
 	       "quit\n");
 }
@@ -531,3 +549,403 @@ command_multiboot(char *arg)
 		printf("boot returned\n");
 }
 
+#if 1	/* XXX: XXXNONAKA start */
+static void
+hexstr(char *p, uint32_t value)
+{
+	int i;
+
+	for (i = 0; i < 8; i++)
+		p[i] = hexdigits[(value >> (4 * (7 - i))) & 0xf];
+	p[8] = '\0';
+}
+
+static int
+decode_4(uint32_t *p, char *buf, size_t len)
+{
+	uint32_t value = 0;
+	int hexoffset = 2;
+	int i, c;
+
+	if (len == 0)
+		return -1;
+
+	if (len >= 3 && buf[0] == '0' && buf[1] == 'x') {
+ hex:
+ 		if (len > 8 + hexoffset)
+			goto error;
+
+ 		for (i = hexoffset; i < len; i++) {
+			value <<= 4;
+			c = buf[i];
+			if (c >= '0' && c <= '9') {
+				value += c - '0';
+			} else if (c >= 'A' && c <= 'F') {
+				value += c - 'A' + 10;
+			} else if (c >= 'a' && c <= 'f') {
+				value += c - 'a' + 10;
+			} else
+				goto error;
+		}
+	} else if (len <= 10) {
+		for (i = 0; i < len; i++) {
+			c = buf[i];
+			if (c >= '0' && c <= '9') {
+				value *= 10;
+				value += c - '0';
+			} else if ((c >= 'A' && c <= 'F') ||
+			    (c >= 'a' && c <= 'f')) {
+				/* switch to hex decoding */
+				hexoffset = 0;
+				goto hex;
+			} else
+				goto error;
+		}
+	} else
+		goto error;
+
+	*p = value;
+	return 0;
+
+ error:
+	return -1;
+}
+
+static int
+scan(char **top, char **next, char *p, bool iserror)
+{
+
+	/* skip space and tab */
+	for (;; p++) {
+		if (*p == '\0')
+			return -1;
+		if (*p != ' ' && *p != '\t')
+			break;
+	}
+
+	*top = p;
+	for (;; p++) {
+		if (*p == '\0') {
+			if (iserror)
+				return -1;
+			p = NULL;
+			break;
+		}
+		if (*p == ' ' || *p == '\t') {
+			*p++ = '\0';
+			break;
+		}
+	}
+	if (next != NULL)
+		*next = p;
+	return 0;
+}
+
+void
+command_memoryread_4(char *arg)
+{
+	char hex[9];
+	char *p = arg;
+	volatile uint32_t *mem;
+	char *addressp, *lenp;
+	uint32_t address, len;
+	int rv;
+	int i;
+
+	rv = scan(&addressp, &p, p, false);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&address, addressp, strlen(addressp));
+	if (rv != 0)
+		goto error;
+	address = address & ~3;
+
+	if (p != NULL) {
+		rv = scan(&lenp, NULL, p, false);
+		if (rv != 0)
+			goto error;
+		rv = decode_4(&len, lenp, strlen(lenp));
+		if (rv != 0)
+			goto error;
+		len = (len + 3) & ~3;
+	} else
+		len = 4;
+
+#if 1	/* XXX: va:0x00000000 <-> pa:0x00010000(SECONDARY_LOAD_ADDRESS) */
+	address -= 0x10000;
+#endif
+	mem = (volatile uint32_t *)address;
+	for (len /= 4, i = 0; len > 0; mem++, len--, i++) {
+		if ((i % 4) == 0) {
+			hexstr(hex, (uint32_t)mem);
+			printf("%s%s:", (i != 0) ? "\n" : "", hex);
+		}
+		hexstr(hex, *mem);
+		printf(" %s", hex);
+	}
+	printf("\n");
+	return;
+
+ error:
+ 	printf("invalid argument: <address> {length}\n");
+	printf("  ex. mrd 0xfe567890 256\n");
+}
+
+void
+command_memorywrite_4(char *arg)
+{
+	char hex[9];
+	char *p = arg;
+	volatile uint32_t *mem;
+	char *addressp, *valuep;
+	uint32_t address, value;
+	int rv;
+
+	rv = scan(&addressp, &p, p, true);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&address, addressp, strlen(addressp));
+	if (rv != 0)
+		goto error;
+
+	rv = scan(&valuep, NULL, p, false);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&value, valuep, strlen(valuep));
+	if (rv != 0)
+		goto error;
+
+#if 1	/* XXX: va:0x00000000 <-> pa:0x00010000(SECONDARY_LOAD_ADDRESS) */
+	address -= 0x10000;
+#endif
+	mem = (volatile uint32_t *)address;
+
+	hexstr(hex, address);
+	printf("%s: ", hex);
+	hexstr(hex, *mem);
+	printf("%s -> ", hex);
+
+	*mem = value;
+
+	hexstr(hex, *mem);
+	printf("%s\n", hex);
+
+	if (*mem != value)
+		printf("write failed\n");
+	return;
+
+ error:
+	printf("invalid argument: <address> <value>\n");
+	printf("  ex. mwd 0x01abcdef 1\n");
+}
+
+#include "cpufunc.h"
+
+#define	PCI_MODE1_ENABLE	0x80000000U
+#define	PCI_MODE1_ADDRESS_REG	0x0cf8
+#define	PCI_MODE1_DATA_REG	0x0cfc
+
+/* XXX: mode 1 only */
+static int pci_mode = -1;
+
+static int
+pci_mode_detect(void)
+{
+	uint32_t sav, val;
+
+	if (pci_mode != -1)
+		return (pci_mode);
+
+	sav = inl(PCI_MODE1_ADDRESS_REG);
+
+	pci_mode = 1;	/* assume this for now */
+
+	outl(PCI_MODE1_ADDRESS_REG, PCI_MODE1_ENABLE);
+	outb(PCI_MODE1_ADDRESS_REG + 3, 0);
+	outw(PCI_MODE1_ADDRESS_REG + 2, 0);
+	val = inl(PCI_MODE1_ADDRESS_REG);
+	if ((val & 0x80fffffc) != PCI_MODE1_ENABLE)
+		goto not1;
+	outl(PCI_MODE1_ADDRESS_REG, 0);
+	val = inl(PCI_MODE1_ADDRESS_REG);
+	if ((val & 0x80fffffc) != 0)
+		goto not1;
+	return (pci_mode);
+
+ not1:
+ 	outl(PCI_MODE1_ADDRESS_REG, sav);
+	return (pci_mode = 0);
+}
+
+static uint32_t
+pci_make_tag(int bus, int device, int function)
+{
+	uint32_t tag;
+
+	tag = PCI_MODE1_ENABLE;
+	tag |= bus << 16;
+	tag |= device << 11;
+	tag |= function << 8;
+
+	return tag;
+}
+
+void
+command_dump_pcicfg(char *arg)
+{
+	char hex[9];
+	char *p = arg;
+	char *busp, *devp, *funcp;
+	uint32_t bus, device, function, address;
+	uint32_t tag, value;
+	int rv;
+
+	if (pci_mode_detect() != 1) {
+		printf("pci mode != 1\n");
+		return;
+	}
+
+	/* bus */
+	rv = scan(&busp, &p, p, true);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&bus, busp, strlen(busp));
+	if (rv != 0)
+		goto error;
+	if (bus < 0 || bus >= 256)
+		goto error;
+
+	/* device */
+	rv = scan(&devp, &p, p, true);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&device, devp, strlen(devp));
+	if (rv != 0)
+		goto error;
+	if (device < 0 || device >= 32)
+		goto error;
+
+	/* function */
+	rv = scan(&funcp, NULL, p, false);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&function, funcp, strlen(funcp));
+	if (rv != 0)
+		goto error;
+	if (function < 0 || function >= 8)
+		goto error;
+
+	printf("bus %d, device %d, function %d:", bus, device, function);
+	for (address = 0; address < 256; address += 4) {
+		if ((address % 16) == 0) {
+			hexstr(hex, address);
+			printf("\n%s:", hex);
+		}
+
+		tag = pci_make_tag(bus, device, function);
+		outl(PCI_MODE1_ADDRESS_REG, tag | address);
+		value = inl(PCI_MODE1_DATA_REG);
+		outl(PCI_MODE1_ADDRESS_REG, 0);
+
+		hexstr(hex, value);
+		printf(" %s", hex);
+	}
+	printf("\n");
+
+	return;
+
+ error:
+	printf("invalid argument: <bus> <device> <function>\n");
+	printf("  bus: 0-255, device: 0-31, function: 0-7\n");
+}
+
+void
+command_write_pcicfg(char *arg)
+{
+	char hex[9];
+	char *p = arg;
+	char *busp, *devp, *funcp, *addressp, *valuep;
+	uint32_t bus, device, function, address;
+	uint32_t tag, reg, value;
+	int rv;
+
+	if (pci_mode_detect() != 1) {
+		printf("pci mode != 1\n");
+		return;
+	}
+
+	/* bus */
+	rv = scan(&busp, &p, p, true);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&bus, busp, strlen(busp));
+	if (rv != 0)
+		goto error;
+	if (bus < 0 || bus >= 256)
+		goto error;
+
+	/* device */
+	rv = scan(&devp, &p, p, true);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&device, devp, strlen(devp));
+	if (rv != 0)
+		goto error;
+	if (device < 0 || device >= 32)
+		goto error;
+
+	/* function */
+	rv = scan(&funcp, &p, p, true);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&function, funcp, strlen(funcp));
+	if (rv != 0)
+		goto error;
+	if (function < 0 || function >= 8)
+		goto error;
+
+	/* address */
+	rv = scan(&addressp, &p, p, true);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&address, addressp, strlen(addressp));
+	if (rv != 0)
+		goto error;
+	if (address < 0 || address >= 256 || (address & 3) != 0)
+		goto error;
+
+	/* value */
+	rv = scan(&valuep, NULL, p, false);
+	if (rv != 0)
+		goto error;
+	rv = decode_4(&value, valuep, strlen(valuep));
+	if (rv != 0)
+		goto error;
+
+	printf("bus %d, device %d, function %d: ", bus, device, function);
+	hexstr(hex, address);
+	printf("%s: ", hex);
+
+	tag = pci_make_tag(bus, device, function);
+	outl(PCI_MODE1_ADDRESS_REG, tag | address);
+	reg = inl(PCI_MODE1_DATA_REG);
+	outl(PCI_MODE1_ADDRESS_REG, 0);
+	hexstr(hex, reg);
+	printf("%s -> ", hex);
+
+	outl(PCI_MODE1_ADDRESS_REG, tag | address);
+	outl(PCI_MODE1_DATA_REG, value);
+	outl(PCI_MODE1_ADDRESS_REG, 0);
+
+	outl(PCI_MODE1_ADDRESS_REG, tag | address);
+	reg = inl(PCI_MODE1_DATA_REG);
+	outl(PCI_MODE1_ADDRESS_REG, 0);
+	hexstr(hex, reg);
+	printf("%s\n", hex);
+	return;
+
+ error:
+	printf("invalid argument: <bus> <device> <function> <address> <value>\n");
+	printf("  bus: 0-255, device: 0-31, function: 0-7, address: 0-255\n");
+}
+#endif	/* XXX: XXXNONAKA end */
