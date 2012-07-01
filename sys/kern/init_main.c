@@ -171,6 +171,7 @@ __KERNEL_RCSID(0, "$NetBSD: init_main.c,v 1.447 2013/02/21 01:39:55 pgoyette Exp
 #include <sys/ksyms.h>
 #include <sys/uidinfo.h>
 #include <sys/kprintf.h>
+#include <sys/kiconv.h>
 #ifdef FAST_IPSEC
 #include <netipsec/ipsec.h>
 #endif
@@ -594,6 +595,9 @@ main(void)
 	machdep_init();
 
 	procinit_sysctl();
+
+	/* Initialize in-kernel iconv. */
+	kiconv_init();
 
 	/*
 	 * Create process 1 (init(8)).  We do this now, as Unix has

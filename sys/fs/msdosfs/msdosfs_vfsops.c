@@ -200,6 +200,8 @@ update_mp(struct mount *mp, struct msdosfs_args *argp)
 	pmp->pm_gmtoff = argp->gmtoff;
 	pmp->pm_flags |= argp->flags & MSDOSFSMNT_MNTOPT;
 
+	/* XXX: XXXNONAKA update codepage/iocharset */
+
 	/*
 	 * GEMDOS knows nothing about win95 long filenames
 	 */
@@ -254,6 +256,8 @@ msdosfs_mountroot(void)
 	args.mask = 0777;
 	args.version = MSDOSFSMNT_VERSION;
 	args.dirmask = 0777;
+	args.codepage[0] = '\0';
+	args.iocharset[0] = '\0';
 
 	if ((error = msdosfs_mountfs(rootvp, mp, l, &args)) != 0) {
 		vfs_unbusy(mp, false, NULL);
@@ -308,6 +312,10 @@ msdosfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 		args->version = MSDOSFSMNT_VERSION;
 		args->dirmask = pmp->pm_dirmask;
 		args->gmtoff = pmp->pm_gmtoff;
+		strlcpy(args->codepage, pmp->pm_codepage,
+		    sizeof(args->codepage));
+		strlcpy(args->iocharset, pmp->pm_iocharset,
+		    sizeof(args->iocharset));
 		*data_len = sizeof *args;
 		return 0;
 	}
@@ -326,6 +334,14 @@ msdosfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 	 */
 	if (args->version < 3)
 		args->gmtoff = 0;
+
+	/*
+	 * Unset codepage/iocharset for pre-v4 mount structure args.
+	 */
+	if (args->version < 4) {
+		args->codepage[0] = '\0';
+		args->iocharset[0] = '\0';
+	}
 
 	/*
 	 * If updating, check whether changing from read-only to
@@ -801,6 +817,19 @@ msdosfs_mountfs(struct vnode *devvp, struct mount *mp, struct lwp *l, struct msd
 		pmp->pm_flags |= MSDOSFSMNT_WAITONFAT;
 
 	/*
+	 * Copy codepage/iocharset args.
+	 */
+	strlcpy(pmp->pm_codepage, argp->codepage, sizeof(pmp->pm_codepage));
+	strlcpy(pmp->pm_iocharset, argp->iocharset, sizeof(pmp->pm_iocharset));
+	if (msdosfs_initkiconv(pmp)) {
+		/* Disable filename convertion */
+		pmp->pm_flags &= ~MSDOSFS_CONVERTFNAME;
+		printf("warning: filename convertion is disabled. "
+		    "(codepage=%s, iocharset=%s)\n",
+		    pmp->pm_codepage, pmp->pm_iocharset);
+	}
+
+	/*
 	 * Finish up.
 	 */
 	if (ronly)
@@ -893,6 +922,7 @@ msdosfs_unmount(struct mount *mp, int mntflags)
 	    pmp->pm_flags & MSDOSFSMNT_RONLY ? FREAD : FREAD|FWRITE, NOCRED);
 	vput(pmp->pm_devvp);
 	msdosfs_fh_destroy(pmp);
+	msdosfs_finikiconv(pmp);
 	free(pmp->pm_inusemap, M_MSDOSFSFAT);
 	free(pmp, M_MSDOSFSMNT);
 	mp->mnt_data = NULL;

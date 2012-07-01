@@ -295,13 +295,13 @@ int	msdosfs_pathconf	(void *);
 /*
  * Internal service routine prototypes.
  */
-struct componentname;
+struct msdosfs_winfn;
 struct direntry;
 struct kauth_cred;
 int msdosfs_update(struct vnode *, const struct timespec *,
 	    const struct timespec *, int);
 int createde(struct denode *, struct denode *,
-		struct denode **, struct componentname *);
+		struct denode **, struct msdosfs_winfn *);
 int deextend(struct denode *, u_long, struct kauth_cred *);
 int deget(struct msdosfsmount *, u_long, u_long, struct denode **);
 int detrunc(struct denode *, u_long, int, struct kauth_cred *);
@@ -313,7 +313,7 @@ int readep(struct msdosfsmount *, u_long, u_long,
 		struct buf **, struct direntry **);
 void reinsert(struct denode *);
 int removede(struct denode *, struct denode *);
-int uniqdosname(struct denode *, struct componentname *, u_char *);
+int uniqdosname(struct denode *, struct msdosfs_winfn *, u_char *);
 int findwin95(struct denode *);
 int msdosfs_gop_alloc(struct vnode *, off_t, off_t, int, struct kauth_cred *);
 void msdosfs_gop_markupdate(struct vnode *, int);

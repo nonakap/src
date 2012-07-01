@@ -64,9 +64,11 @@ struct msdosfs_args {
 
 	/* Following items added after versioning support */
 	int	version;	/* version of the struct */
-#define MSDOSFSMNT_VERSION	3
+#define MSDOSFSMNT_VERSION	4
 	mode_t  dirmask;	/* v2: mask to be applied for msdosfs perms */
 	int	gmtoff;		/* v3: offset from UTC in seconds */
+	char	codepage[32];	/* v4: short filename codepage */
+	char	iocharset[32];	/* v4: user-visible filename encoding */
 };
 #endif
 
@@ -86,11 +88,12 @@ struct msdosfs_args {
 
 #define	MSDOSFSMNT_RONLY	0x80000000	/* mounted read-only	*/
 #define	MSDOSFSMNT_WAITONFAT	0x40000000	/* mounted synchronous	*/
-#define	MSDOSFS_FATMIRROR	0x20000000	/* FAT is mirrored */
+#define	MSDOSFS_FATMIRROR	0x20000000	/* FAT is mirrored	*/
+#define	MSDOSFS_CONVERTFNAME	0x10000000	/* convert filename	*/
 
 #define MSDOSFSMNT_BITS "\177\20" \
     "b\00shortname\0b\01longname\0b\02nowin95\0b\03gemdosfs\0b\04mntversioned\0" \
-    "b\037ronly\0b\036waitonfat\0b\035fatmirror\0"
+    "b\037ronly\0b\036waitonfat\0b\035fatmirror\0b\034convertfname\0"
 
 #ifdef _KERNEL
 #include <sys/mallocvar.h>
@@ -140,6 +143,9 @@ struct msdosfsmount {
 	u_int pm_curfat;	/* current FAT for FAT32 (0 otherwise) */
 	u_int *pm_inusemap;	/* ptr to bitmap of in-use clusters */
 	u_int pm_flags;		/* see below */
+	char pm_codepage[32];	/* short filename codepage */
+	char pm_iocharset[32];	/* user-visible filename encoding */
+	void *pm_kiconvcookie;	/* cookie of convert filename */
 };
 /* Byte offset in FAT on filesystem pmp, cluster cn */
 #define	FATOFS(pmp, cn)	((cn) * (pmp)->pm_fatmult / (pmp)->pm_fatdiv)
