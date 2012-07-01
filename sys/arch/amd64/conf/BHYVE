@@ -1,0 +1,2 @@
+include	"arch/amd64/conf/GENERIC"
+vmm0 at mainbus0

@@ -73,12 +73,15 @@ include	"dev/i2o/files.i2o"
 define	bios32
 file	arch/amd64/amd64/bios32.c		bios32 needs-flag
 
+# BHyVe
+include "arch/amd64/conf/files.bhyve"
+
 #
 # System bus types
 #
 
 # XXX BIOS32 only if something that uses it is configured!
-device	mainbus: isabus, pcibus, bios32, acpibus, cpubus, ioapicbus, ipmibus
+device	mainbus: isabus, pcibus, bios32, acpibus, cpubus, ioapicbus, ipmibus, vmmbus
 attach	mainbus at root
 file	arch/amd64/amd64/mainbus.c		mainbus
 
