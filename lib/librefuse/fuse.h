@@ -166,6 +166,13 @@ struct fuse *fuse_setup(int, char **, const struct fuse_operations *,
 	size_t, char **, int *, int *);
 void fuse_teardown(struct fuse *, char *);
 
+struct fuse_session;
+struct fuse_session *fuse_get_session(struct fuse *);
+
+int fuse_set_signal_handlers(struct fuse_session *);
+
+int fuse_daemonize(int);
+
 #if FUSE_USE_VERSION == 22
 #define fuse_unmount fuse_unmount_compat22
 #endif
