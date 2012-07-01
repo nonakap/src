@@ -1443,3 +1443,47 @@ fuse_teardown(struct fuse *fuse, char *mountpoint)
 	fuse_unmount(mountpoint, fuse->fc);
 	fuse_destroy(fuse);
 }
+
+struct fuse_session *
+fuse_get_session(struct fuse *f)
+{
+
+	return (struct fuse_session *)f->fc->pu;
+}
+
+static struct puffs_usermount *puffs_instance;
+
+/* exit session on HUP, TERM and INT signals and ignore PIPE signal */
+int
+fuse_set_signal_handlers(struct fuse_session *se)
+{
+	int error;
+
+	if (puffs_instance != NULL)
+		return -1;
+	error = puffs_unmountonsignal(SIGHUP, 0);
+	if (error != 0)
+		return -1;
+	error = puffs_unmountonsignal(SIGTERM, 0);
+	if (error != 0)
+		return -1;
+	error = puffs_unmountonsignal(SIGINT, 0);
+	if (error != 0)
+		return -1;
+	error = puffs_unmountonsignal(SIGPIPE, 1);
+	if (error != 0)
+		return -1;
+
+	puffs_instance = (struct puffs_usermount *)se;
+	return 0;
+}
+
+int
+fuse_daemonize(int foreground)
+{
+
+	if (!foreground && puffs_instance != NULL) {
+		puffs_daemon(puffs_instance, 0, 0);
+	}
+	return 0;
+}
