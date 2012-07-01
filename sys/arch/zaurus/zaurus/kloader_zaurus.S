@@ -28,8 +28,7 @@
 #include <machine/asm.h>
 
 #include <arm/armreg.h>
-#include <arm/arm32/pte.h>
-#include <arm/arm32/pmap.h>		/* for PMAP_DOMAIN_KERNEL */
+#include <machine/bootinfo.h>
 
 /*
  * CPWAIT -- Canonical method to wait for CP15 update.
@@ -45,7 +44,12 @@
 	mov	tmp, tmp		/* wait for it to complete */	;\
 	CPWAIT_BRANCH			/* branch to next insn */
 
+#define	VATOPA(reg)							\
+	bic	reg, reg, #0xff000000	/* clear upper 8 bits */	;\
+	orr	reg, reg, #0xa0000000	/* OR in physical base address */
+
 	.text
+	.align	0
 /*
  * void
  * kloader_zaurus_boot(struct kloader_bootinfo *kbi,
@@ -56,13 +60,11 @@
 	.global	_C_LABEL(kloader_zaurus_boot)
 _C_LABEL(kloader_zaurus_boot):
 	mov	sp, r0			/* sp: kbi */
-	bic	sp, sp, #0xff000000	/* clear upper 8 bits */
-	orr	sp, sp, #0xa0000000	/* OR in physical base address */
+	VATOPA(sp)
 
 	/* We will go ahead and disable the MMU here. */
 	adr	r8, .Lmmuoff
-	bic	r8, r8, #0xff000000	/* clear upper 8 bits */
-	orr	r8, r8, #0xa0000000	/* OR in physical base address */
+	VATOPA(r8)
 
 	mrc	p15, 0, r2, c1, c0, 0
 	bic	r2, r2, #CPU_CONTROL_MMU_ENABLE
@@ -79,17 +81,17 @@ _C_LABEL(kloader_zaurus_boot):
 .Lmmuoff:
 
 	/* Load kernel image */
+	mvn	ip, #0		/* ip: minv = 0xffffffff */
 	mov	r4, r1		/* tag */
 1:	mov	r3, r4
 	cmp	r3, #0		/* tag == NULL */
 	beq	3f
-	bic	r3, r3, #0xff000000
-	orr	r3, r3, #0xa0000000
+	VATOPA(r3)
 	ldmia	r3, {r4-r7}	/* r4: next, r5: src, r6: dst, r7: sz */
-	bic	r5, r5, #0xff000000
-	orr	r5, r5, #0xa0000000
-	bic	r6, r6, #0xff000000
-	orr	r6, r6, #0xa0000000
+	VATOPA(r5)
+	VATOPA(r6)
+	cmp	ip, r6		/* if (minv > PA(dst)) */
+	movhi	ip, r6		/*     minv = PA(dst) */
 	add	r8, r6, r7	/* r8: dst + sz */
 2:	ldr	r9, [r5], #4	/* copy */
 	str	r9, [r6], #4
@@ -104,19 +106,39 @@ _C_LABEL(kloader_zaurus_boot):
 	bl	.Lputcrlf
 #endif
 
-	/* Set kernel entry */
-	ldr	r0, [sp]
+	/* Setup bootinfo */
+	ldr	lr, [sp]		/* lr: kbi->entry */
+	VATOPA(lr)
+	add	r5, sp, #12		/* r5: &kbi->bootinfo */
+	mvn	r6, #0
+	cmp	ip, r6			/* if (minv == 0xffffffffff) */
+	moveq	ip, lr			/*     minv = PA(kbi->entry) */
+	mov	r7, #BOOTARGS_BUFSIZ	/* r7: copy size */
+	sub	r6, ip, r7		/* r6: new bootinfo address */
+	/* Set magic */
+	add	r5, r5, #4
+	ldr	r9, .Lbootargs_magic
+	str	r9, [r6], #4
+	sub	r7, r7, #4
+	/* Copy bootargs */
+4:	ldr	r9, [r5], #4
+	str	r9, [r6], #4
+	subs	r7, r7, #4
+	bgt	4b
 
 	/* Set temporary stack pointer */
 	ldr	sp, .Lstack_addr
 
 	/* Jump to kernel entry */
-	mov	pc, r0
+	mov	pc, lr
 
 99:	b	99b
 
 .Lstack_addr:
 	.word	0xa0004000
+
+.Lbootargs_magic:
+	.word	BOOTARGS_MAGIC
 
 #ifdef PROGRESS
 .Lprogress:
@@ -143,8 +165,8 @@ _C_LABEL(kloader_zaurus_boot):
 2:	ldr	r9, [r1]
 	tst	r9, #0x20
 	beq	2b
-	adr	r12, .Lhextable
-	ldrb	r9, [r12, r11]
+	adr	r9, .Lhextable
+	ldrb	r9, [r9, r11]
 	str	r9, [r2]
 	cmp	r10, #0
 	bne	1b

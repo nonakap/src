@@ -28,12 +28,8 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: kloader_machdep.c,v 1.6 2012/01/21 18:56:51 nonaka Exp $");
 
-#include "debug_kloader.h"
-
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/device.h>
-#include <sys/disklabel.h>
 
 #include <machine/kloader.h>
 #include <machine/pmap.h>
@@ -42,8 +38,6 @@ __KERNEL_RCSID(0, "$NetBSD: kloader_machdep.c,v 1.6 2012/01/21 18:56:51 nonaka E
 #include <arm/xscale/pxa2x0reg.h>
 
 #include <zaurus/zaurus/zaurus_var.h>
-
-#define	KERNEL_TEXT_BASE	((vaddr_t)&KERNEL_BASE_virt)
 
 kloader_jumpfunc_t kloader_zaurus_jump __attribute__((__noreturn__));
 kloader_bootfunc_t kloader_zaurus_boot __attribute__((__noreturn__));
@@ -74,60 +68,12 @@ void
 kloader_zaurus_jump(kloader_bootfunc_t func, vaddr_t sp,
     struct kloader_bootinfo *kbi, struct kloader_page_tag *tag)
 {
-	extern int kloader_howto;
-	extern char KERNEL_BASE_virt[];
-	void (*bootinfop)(void *, void *);
-	uint32_t *bootmagicp;
-	vaddr_t top, ptr;
-	struct bootinfo *bootinfo;
-	struct btinfo_howto *bi_howto;
-	struct btinfo_rootdevice *bi_rootdv;
 
 	disable_interrupts(I32_bit|F32_bit);	
-
-	/* copy 2nd boot-loader to va=pa page */
-	bootinfop = (void *)(KERNEL_TEXT_BASE - PAGE_SIZE);
-	memmove(bootinfop, func, PAGE_SIZE);
-
-	/*
-	 * make bootinfo
-	 */
-	bootmagicp = (uint32_t *)(KERNEL_TEXT_BASE - BOOTARGS_BUFSIZ);
-	memset(bootmagicp, 0, BOOTARGS_BUFSIZ);
-	bootinfo = (struct bootinfo *)(bootmagicp + 1);
-	bootinfo->nentries = 0;
-	top = ptr = (vaddr_t)bootinfo->info;
-
-	/* pass to howto for new kernel */
-	bi_howto = (struct btinfo_howto *)ptr;
-	bi_howto->common.len = sizeof(struct btinfo_howto);
-	bi_howto->common.type = BTINFO_HOWTO;
-	bi_howto->howto = kloader_howto;
-	bootinfo->nentries++;
-	ptr += bi_howto->common.len;
-
-	/* set previous root device for new boot device */
-	if (root_device != NULL 
-	 && device_class(root_device) == DV_DISK
-	 && !device_is_a(root_device, "dk")) {
-		bi_rootdv = (struct btinfo_rootdevice *)ptr;
-		bi_rootdv->common.len = sizeof(struct btinfo_rootdevice);
-		bi_rootdv->common.type = BTINFO_ROOTDEVICE;
-		snprintf(bi_rootdv->devname, sizeof(bi_rootdv->devname), "%s%c",
-		    device_xname(root_device), (int)DISKPART(rootdev) + 'a');
-		bootinfo->nentries++;
-		ptr += bi_rootdv->common.len;
-	}
-
-	*bootmagicp = BOOTARGS_MAGIC;
 	cpu_idcache_wbinv_all();
 
 	/* jump to 2nd boot-loader */
-	(*bootinfop)(kbi, tag);
-
-	/*NOTREACHED*/
-	for (;;)
-		continue;
+	(*func)(kbi, tag);
 }
 
 /*

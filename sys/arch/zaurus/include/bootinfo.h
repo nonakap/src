@@ -37,7 +37,8 @@
 #define BTINFO_HOWTO		1
 #define BTINFO_CONSDEV		2
 #define BTINFO_ROOTDEVICE	3
-#define BTINFO_MAX		4
+#define BTINFO_UNUSED		4
+#define BTINFO_MAX		5
 
 #ifndef	_LOCORE
 
@@ -79,10 +80,10 @@ struct bootinfo {
 	char info[BOOTINFO_MAXSIZE - sizeof(int)];
 };
 
-#endif /* _LOCORE */
-
 #ifdef _KERNEL
 void *lookup_bootinfo(int type);
 #endif
+
+#endif /* _LOCORE */
 
 #endif	/* _ZAURUS_BOOTINFO_H_ */

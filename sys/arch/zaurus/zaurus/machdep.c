@@ -237,10 +237,7 @@ const char *console =
 int glass_console = 0;
 
 #ifdef KLOADER
-pv_addr_t bootinfo_pt;
-pv_addr_t bootinfo_pg;
 struct kloader_bootinfo kbootinfo;
-int kloader_howto = 0;
 #else
 struct bootinfo _bootinfo;
 #endif
@@ -257,7 +254,16 @@ void	dumpsys(void);
 void	kgdb_port_init(void);
 #endif
 #ifdef KLOADER
-static int parseboot(char *arg, char **filename, int *howto);
+#define	BI_ADD(bi, t)							\
+do {									\
+	(bi)->common.len = sizeof(*(bi));				\
+	(bi)->common.type = (t);					\
+	bootinfo_add(&((bi)->common));					\
+} while (/*CONSTCOND*/ 0)
+#define	BI_DEL(type)	bootinfo_del((type))
+static int bootinfo_add(struct btinfo_common *bi);
+static void bootinfo_del(int type);
+static int parseboot(char *arg, char **rootdev, char **filename, int *howto);
 static char *gettrailer(char *arg);
 static int parseopts(const char *opts, int *howto);
 #endif
@@ -329,6 +335,7 @@ static struct pxa2x0_gpioconf *pxa27x_zaurus_gpioconf[] = {
 void
 cpu_reboot(int howto, char *bootstr)
 {
+
 	/*
 	 * If we are still cold then hit the air brakes
 	 * and crash to earth fast
@@ -343,14 +350,30 @@ cpu_reboot(int howto, char *bootstr)
 #ifdef KLOADER
 	if ((howto & RB_HALT) == 0 && panicstr == NULL) {
 		char *filename = NULL;
+		int kloader_howto = boothowto;
 
 		if ((howto & RB_STRING) && (bootstr != NULL)) {
-			if (parseboot(bootstr, &filename, &kloader_howto) == 0){
+			char *rootdevname = NULL;
+
+			if (parseboot(bootstr, &rootdevname, &filename,
+			    &kloader_howto)) {
+				struct btinfo_howto bih;
+				struct btinfo_rootdevice bir;
+				if (kloader_howto != boothowto) {
+					bih.howto = kloader_howto;
+					BI_ADD(&bih, BTINFO_HOWTO);
+				}
+				if (rootdevname != NULL &&
+				    strlen(rootdevname) < sizeof(bir.devname)) {
+					BI_DEL(BTINFO_BOOTDISK);
+					strcpy(bir.devname, rootdevname);
+					BI_ADD(&bir, BTINFO_ROOTDEVICE);
+				}
+			} else {
 				filename = NULL;
-				kloader_howto = 0;
 			}
 		}
-		if (kloader_howto != 0) {
+		if (kloader_howto != RB_AUTOBOOT) {
 			printf("howto: 0x%x\n", kloader_howto);
 		}
 		if (filename != NULL) {
@@ -406,17 +429,12 @@ haltsys:
 		printf("The operating system has halted.\n");
 		printf("Please press any key to reboot.\n\n");
 		cngetc();
-	}
 #ifdef KLOADER
-	else if (panicstr == NULL) {
+	} else if (panicstr == NULL) {
 		delay(1 * 1000 * 1000);
 		kloader_reboot();
-		printf("\n");
-		printf("Failed to load a new kernel.\n");
-		printf("Please press any key to reboot.\n\n");
-		cngetc();
-	}
 #endif
+	}
 
 	printf("rebooting...\n");
 	delay(1 * 1000 * 1000);
@@ -675,18 +693,19 @@ initarm(void *arg)
 	 * Examine the boot args string for options we need to know about
 	 * now.
 	 */
+#ifdef KLOADER
+	bootinfo = &kbootinfo.bootinfo;
+#else
+	bootinfo = &_bootinfo;
+#endif
 	magicaddr = (u_int *)(KERNEL_BASE_PHYS - BOOTARGS_BUFSIZ);
 	if (*magicaddr == BOOTARGS_MAGIC) {
-#ifdef KLOADER
-		bootinfo = &kbootinfo.bootinfo;
-#else
-		bootinfo = &_bootinfo;
-#endif
 		memcpy(bootinfo, (void *)(KERNEL_BASE_PHYS - BOOTINFO_MAXSIZE),
 		    BOOTINFO_MAXSIZE);
 		bi_howto = lookup_bootinfo(BTINFO_HOWTO);
 		boothowto = (bi_howto != NULL) ? bi_howto->howto : RB_AUTOBOOT;
 	} else {
+		memset(bootinfo, 0, sizeof(*bootinfo));
 		boothowto = RB_AUTOBOOT;
 	}
 	*magicaddr = 0xdeadbeef;
@@ -830,9 +849,6 @@ initarm(void *arg)
 			++loop1;
 		}
 	}
-#ifdef KLOADER
-	valloc_pages(bootinfo_pt, L2_TABLE_SIZE / PAGE_SIZE);
-#endif
 
 	/* This should never be able to happen but better confirm that. */
 	if (!kernel_l1pt.pv_pa || (kernel_l1pt.pv_pa & (L1_TABLE_SIZE-1)) != 0)
@@ -855,11 +871,6 @@ initarm(void *arg)
 	KASSERT(xscale_minidata_clean_size <= PAGE_SIZE);
 	valloc_pages(minidataclean, 1);
 
-#ifdef KLOADER
-	bootinfo_pg.pv_pa = BOOTINFO_PAGE;
-	bootinfo_pg.pv_va = KERNEL_BASE + bootinfo_pg.pv_pa - physical_start;
-#endif
-
 #ifdef VERBOSE_INIT_ARM
 	printf("IRQ stack: p0x%08lx v0x%08lx\n", irqstack.pv_pa,
 	    irqstack.pv_va); 
@@ -872,10 +883,6 @@ initarm(void *arg)
 	printf("minidataclean: p0x%08lx v0x%08lx, size = %ld\n",
 	    minidataclean.pv_pa, minidataclean.pv_va,
 	    xscale_minidata_clean_size);
-#ifdef KLOADER
-	printf("bootinfo_pg: p0x%08lx v0x%08lx\n", bootinfo_pg.pv_pa,
-	    bootinfo_pg.pv_va);
-#endif
 #endif
 
 	/*
@@ -909,9 +916,6 @@ initarm(void *arg)
 	for (loop = 0; loop < KERNEL_PT_VMDATA_NUM; loop++)
 		pmap_link_l2pt(l1pagetable, KERNEL_VM_BASE + loop * 0x00400000,
 		    &kernel_pt_table[KERNEL_PT_VMDATA + loop]);
-#ifdef KLOADER
-	pmap_link_l2pt(l1pagetable, PXA2X0_SDRAM0_START, &bootinfo_pt);
-#endif
 
 	/* update the top of the kernel VM */
 	pmap_curmaxkvaddr =
@@ -965,13 +969,6 @@ initarm(void *arg)
 		    kernel_pt_table[loop].pv_pa, L2_TABLE_SIZE,
 		    VM_PROT_READ|VM_PROT_WRITE, PTE_PAGETABLE);
 	}
-
-#ifdef KLOADER
-	pmap_map_chunk(l1pagetable, bootinfo_pt.pv_va, bootinfo_pt.pv_pa,
-	    L2_TABLE_SIZE, VM_PROT_READ|VM_PROT_WRITE, PTE_PAGETABLE);
-	pmap_map_chunk(l1pagetable, bootinfo_pg.pv_va, bootinfo_pg.pv_pa,
-	    PAGE_SIZE, VM_PROT_ALL, PTE_CACHE);
-#endif
 
 	/* Map the Mini-Data cache clean area. */
 	xscale_setup_minidata(l1pagetable, minidataclean.pv_va,
@@ -1139,6 +1136,8 @@ lookup_bootinfo(int type)
 
 	if (bootinfo == NULL)
 		return (NULL);
+	if (type == BTINFO_UNUSED)
+		return (NULL);
 
 	n = bootinfo->nentries;
 	help = (struct btinfo_common *)(bootinfo->info);
@@ -1152,15 +1151,92 @@ lookup_bootinfo(int type)
 
 #ifdef KLOADER
 static int
-parseboot(char *arg, char **filename, int *howto)
+bootinfo_add(struct btinfo_common *bi)
+{
+	struct btinfo_common *help, *unused_bi = NULL;
+	int n;
+
+	if (bootinfo == NULL)
+		return (1);
+	if (bi->type == BTINFO_UNUSED)
+		return (1);
+
+	n = bootinfo->nentries;
+	help = (struct btinfo_common *)bootinfo->info;
+	while (n > 0 &&
+	  (char *)help - bootinfo->info < sizeof(bootinfo->info) &&
+	  (char *)help + help->len - bootinfo->info <= sizeof(bootinfo->info)) {
+		if (help->type == bi->type) {
+			/* replace */
+			if (help->len == bi->len) {
+				memcpy(help, bi, bi->len);
+				return (0);
+			}
+			return (1);
+		}
+		if (help->type == BTINFO_UNUSED && help->len == bi->len) {
+			if (unused_bi == NULL) {
+				unused_bi = help;
+			}
+		}
+		n--;
+		help = (struct btinfo_common *)((char *)help + help->len);
+	}
+	if (n != 0)
+		return (1);
+
+	/* replace if unused is avail */
+	if (unused_bi != NULL) {
+		memcpy(unused_bi, bi, bi->len);
+		return (0);
+	}
+
+	/* append */
+	if (bi->len > sizeof(bootinfo->info) - ((char *)help - bootinfo->info))
+		return (1);
+	memcpy(help, bi, bi->len);
+	bootinfo->nentries++;
+	return (0);
+}
+
+static void
+bootinfo_del(int type)
+{
+	struct btinfo_common *help;
+	int n;
+
+	if (bootinfo == NULL)
+		return;
+	if (type == BTINFO_UNUSED)
+		return;
+
+	n = bootinfo->nentries;
+	help = (struct btinfo_common *)bootinfo->info;
+	while (n-- > 0 &&
+	  (char *)help - bootinfo->info < sizeof(bootinfo->info) &&
+	  (char *)help + help->len - bootinfo->info <= sizeof(bootinfo->info)) {
+		if (help->type == type) {
+			help->type = BTINFO_UNUSED;
+		}
+		help = (struct btinfo_common *)((char *)help + help->len);
+	}
+}
+
+static int
+parseboot(char *arg, char **rootdevname, char **filename, int *howto)
 {
 	char *opts = NULL;
 
+	*rootdevname = NULL;
 	*filename = NULL;
-	*howto = 0;
+	*howto = RB_AUTOBOOT;
 
 	/* if there were no arguments */
-	if (arg == NULL || *arg == '\0')
+	if (arg == NULL)
+		return 1;
+	while (*arg == ' ')
+		arg++;
+	if (*arg == '\0')
 		return 1;
 
 	/* format is... */
@@ -1171,7 +1247,15 @@ parseboot(char *arg, char **filename, int *howto)
 		opts = arg;
 	} else {
 		/* there's a file name */
-		*filename = arg;
+		char *sep = strchr(arg, ':');
+		if (sep != NULL) {
+			if (sep[1] != '\0') {
+				*rootdevname = arg;
+				*filename = &sep[1];
+			}
+		}
+		if (*rootdevname == NULL)
+			*filename = arg;
 
 		opts = gettrailer(arg);
 		if (opts == NULL || *opts == '\0') {
@@ -1180,12 +1264,15 @@ parseboot(char *arg, char **filename, int *howto)
 			printf("invalid arguments\n");
 			return 0;
 		}
+
+		if (*rootdevname != NULL)
+			*sep = '\0';
 	}
 
 	/* at this point, we have dealt with filenames. */
 
 	/* now, deal with options */
-	if (opts) {
+	if (opts != NULL) {
 		if (parseopts(opts, howto) == 0) {
 			return 0;
 		}
