@@ -1440,8 +1440,8 @@ alc_watchdog(struct ifnet *ifp)
 	struct alc_softc *sc = ifp->if_softc;
 
 	if ((sc->alc_flags & ALC_FLAG_LINK) == 0) {
-		printf("%s: watchdog timeout (missed link)\n",
-		    device_xname(sc->sc_dev));
+		aprint_debug_dev(sc->sc_dev,
+		    "watchdog timeout (missed link)\n");
 		ifp->if_oerrors++;
 		alc_init_backend(ifp, false);
 		return;
