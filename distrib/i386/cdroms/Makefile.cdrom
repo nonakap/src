@@ -55,6 +55,10 @@ CDRUNTIME+=	./usr/sbin/installboot
 CDRUNTIME+=	./usr/sbin/wiconfig
 CDRUNTIME+=	./usr/share/misc/terminfo.cdb
 CDRUNTIME+=	./usr/share/locale
+.if (${MKCRYPTO} != "no")
+CDRUNTIME+=	./usr/lib/libcrypto.so*
+CDRUNTIME+=	./usr/lib/libssl.so*
+.endif
 
 image_md_pre:
 	${MKDIR} cdrom/libexec/dhcpcd-hooks

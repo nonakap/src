@@ -18,6 +18,11 @@ CPPFLAGS+=-DNO_EDITCOMPLETE -DNO_ABOUT -DNO_AUTH -DNO_HELP -DNO_STATUS -DNO_DEBU
 .else
 LDADD+=	-ledit -lterminfo
 DPADD+=	${LIBEDIT} ${LIBTERMINFO}
+.if (${MKCRYPTO} != "no")
+CPPFLAGS+= -DWITH_SSL
+LDADD+= -lssl -lcrypto
+DPADD+= ${LIBSSL} ${LIBCRYPTO}
+.endif
 .endif
 
 .if (!defined(SMALLPROG) || defined(SMALLPROG_INET6)) && (${USE_INET6} != "no")

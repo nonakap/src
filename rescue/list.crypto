@@ -7,4 +7,4 @@ PROG	ssh		slogin
 SPECIAL	scp	srcdir	crypto/external/bsd/openssh/bin/scp
 SPECIAL	ssh	srcdir	crypto/external/bsd/openssh/bin/ssh
 
-LIBS	-lssh -lcrypto
+LIBS	-lssh -lssl -lcrypto

@@ -64,12 +64,24 @@ __RCSID("$NetBSD: fetch.c,v 1.198 2012/07/04 06:09:37 is Exp $");
 #include <unistd.h>
 #include <time.h>
 
+#ifdef WITH_SSL
+#include <netinet/tcp.h>
+#include <openssl/crypto.h>
+#include <openssl/x509.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#endif
+
 #include "ftp_var.h"
 #include "version.h"
 
 typedef enum {
 	UNKNOWN_URL_T=-1,
 	HTTP_URL_T,
+#ifdef WITH_SSL
+	HTTPS_URL_T,
+#endif
 	FTP_URL_T,
 	FILE_URL_T,
 	CLASSIC_URL_T
@@ -100,7 +112,563 @@ static int	redirect_loop;
 #define	FILE_URL	"file://"	/* file URL prefix */
 #define	FTP_URL		"ftp://"	/* ftp URL prefix */
 #define	HTTP_URL	"http://"	/* http URL prefix */
+#ifdef WITH_SSL
+#define	HTTPS_URL	"https://"	/* https URL prefix */
 
+#define	IS_HTTP_TYPE(urltype) \
+	(((urltype) == HTTP_URL_T) || ((urltype) == HTTPS_URL_T))
+
+struct fetch_connect {
+	int			 sd;		/* file/socket descriptor */
+	char			*buf;		/* buffer */
+	size_t			 bufsize;	/* buffer size */
+	size_t			 bufpos;
+	size_t			 buflen;	/* length of buffer contents */
+	struct {				/* data cached after an
+						   interrupted read */
+		char	*buf;
+		size_t	 size;
+		size_t	 pos;
+		size_t	 len;
+	} cache;
+	int 			 issock;
+	int			 iserr;
+	int			 iseof;
+	SSL			*ssl;		/* SSL handle */
+};
+typedef struct fetch_connect fetch_connect_t;
+
+/*
+ * Write a vector to a connection w/ timeout
+ * Note: can modify the iovec.
+ */
+static ssize_t
+fetch_writev(fetch_connect_t *conn, struct iovec *iov, int iovcnt)
+{
+	struct timeval now, timeout, delta;
+	fd_set writefds;
+	ssize_t len, total;
+	int r;
+
+	if (quit_time > 0) {
+		FD_ZERO(&writefds);
+		gettimeofday(&timeout, NULL);
+		timeout.tv_sec += quit_time;
+	}
+
+	total = 0;
+	while (iovcnt > 0) {
+		while (quit_time > 0 && !FD_ISSET(conn->sd, &writefds)) {
+			FD_SET(conn->sd, &writefds);
+			gettimeofday(&now, NULL);
+			delta.tv_sec = timeout.tv_sec - now.tv_sec;
+			delta.tv_usec = timeout.tv_usec - now.tv_usec;
+			if (delta.tv_usec < 0) {
+				delta.tv_usec += 1000000;
+				delta.tv_sec--;
+			}
+			if (delta.tv_sec < 0) {
+				errno = ETIMEDOUT;
+				return (-1);
+			}
+			errno = 0;
+			r = select(conn->sd + 1, NULL, &writefds, NULL, &delta);
+			if (r == -1) {
+				if (errno == EINTR)
+					continue;
+				return (-1);
+			}
+		}
+		errno = 0;
+		if (conn->ssl != NULL)
+			len = SSL_write(conn->ssl, iov->iov_base, iov->iov_len);
+		else
+			len = writev(conn->sd, iov, iovcnt);
+		if (len == 0) {
+			/* we consider a short write a failure */
+			/* XXX perhaps we shouldn't in the SSL case */
+			errno = EPIPE;
+			return (-1);
+		}
+		if (len < 0) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		total += len;
+		while (iovcnt > 0 && len >= (ssize_t)iov->iov_len) {
+			len -= iov->iov_len;
+			iov++;
+			iovcnt--;
+		}
+		if (iovcnt > 0) {
+			iov->iov_len -= len;
+			iov->iov_base = (char *)iov->iov_base + len;
+		}
+	}
+	return (total);
+}
+
+/*
+ * Write to a connection w/ timeout
+ */
+static int
+fetch_write(fetch_connect_t *conn, const char *str, size_t len)
+{
+	struct iovec iov[1];
+
+	iov[0].iov_base = (char *)__UNCONST(str);
+	iov[0].iov_len = len;
+	return (fetch_writev(conn, iov, 1));
+}
+
+/*
+ * Send a formatted line; optionally echo to terminal
+ */
+static int
+fetch_printf(fetch_connect_t *conn, const char *fmt, ...)
+{
+	va_list ap;
+	size_t len;
+	char *msg;
+	int r;
+
+	va_start(ap, fmt);
+	len = vasprintf(&msg, fmt, ap);
+	va_end(ap);
+
+	if (msg == NULL) {
+		errno = ENOMEM;
+		return (-1);
+	}
+
+	r = fetch_write(conn, msg, len);
+	free(msg);
+	return (r);
+}
+
+static int
+fetch_fileno(fetch_connect_t *conn)
+{
+
+	return (conn->sd);
+}
+
+static int
+fetch_error(fetch_connect_t *conn)
+{
+
+	return (conn->iserr);
+}
+static void
+fetch_clearerr(fetch_connect_t *conn)
+{
+
+	conn->iserr = 0;
+}
+
+static int
+fetch_flush(fetch_connect_t *conn)
+{
+	int v;
+
+	if (conn->issock) {
+#ifdef TCP_NOPUSH
+		v = 0;
+		setsockopt(conn->sd, IPPROTO_TCP, TCP_NOPUSH, &v, sizeof(v));
+#endif
+		v = 1;
+		setsockopt(conn->sd, IPPROTO_TCP, TCP_NODELAY, &v, sizeof(v));
+	}
+	return (0);
+}
+
+static fetch_connect_t *
+fetch_open(const char *fname, const char *fmode)
+{
+	fetch_connect_t *conn;
+	int fd;
+
+	fd = open(fname, O_RDONLY); /* XXX */
+	if (fd < 0)
+		return (NULL);
+
+	if ((conn = calloc(1, sizeof(*conn))) == NULL) {
+		close(fd);
+		return (NULL);
+	}
+
+	conn->sd = fd;
+	conn->issock = 0;
+	return (conn);
+}
+
+static fetch_connect_t *
+fetch_fdopen(int sd, const char *fmode)
+{
+	fetch_connect_t *conn;
+	int opt = 1;
+
+	if ((conn = calloc(1, sizeof(*conn))) == NULL)
+		return (NULL);
+
+	conn->sd = sd;
+	conn->issock = 1;
+	fcntl(sd, F_SETFD, FD_CLOEXEC);
+	setsockopt(sd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
+#ifdef TCP_NOPUSH
+	setsockopt(sd, IPPROTO_TCP, TCP_NOPUSH, &opt, sizeof(opt));
+#endif
+	return (conn);
+}
+
+static int
+fetch_close(fetch_connect_t *conn)
+{
+	int rv = 0;
+
+	if (conn != NULL) {
+		fetch_flush(conn);
+		SSL_free(conn->ssl);
+		rv = close(conn->sd);
+		if (rv < 0) {
+			errno = rv;
+			rv = EOF;
+		}
+		free(conn->cache.buf);
+		free(conn->buf);
+		free(conn);
+	}
+	return (rv);
+}
+
+#define FETCH_READ_WAIT		-2
+#define FETCH_READ_ERROR	-1
+
+static ssize_t
+fetch_ssl_read(SSL *ssl, void *buf, size_t len)
+{
+	ssize_t rlen;
+	int ssl_err;
+
+	rlen = SSL_read(ssl, buf, len);
+	if (rlen < 0) {
+		ssl_err = SSL_get_error(ssl, rlen);
+		if (ssl_err == SSL_ERROR_WANT_READ ||
+		    ssl_err == SSL_ERROR_WANT_WRITE) {
+			return (FETCH_READ_WAIT);
+		}
+		ERR_print_errors_fp(ttyout);
+		return (FETCH_READ_ERROR);
+	}
+	return (rlen);
+}
+
+static ssize_t
+fetch_nonssl_read(int sd, void *buf, size_t len)
+{
+	ssize_t rlen;
+
+	rlen = read(sd, buf, len);
+	if (rlen < 0) {
+		if (errno == EAGAIN || errno == EINTR)
+			return (FETCH_READ_WAIT);
+		return (FETCH_READ_ERROR);
+	}
+	return (rlen);
+}
+
+/*
+ * Cache some data that was read from a socket but cannot be immediately
+ * returned because of an interrupted system call.
+ */
+static int
+fetch_cache_data(fetch_connect_t *conn, char *src, size_t nbytes)
+{
+
+	if (conn->cache.size < nbytes) {
+		char *tmp = realloc(conn->cache.buf, nbytes);
+		if (tmp == NULL)
+			return (-1);
+
+		conn->cache.buf = tmp;
+		conn->cache.size = nbytes;
+	}
+
+	memcpy(conn->cache.buf, src, nbytes);
+	conn->cache.len = nbytes;
+	conn->cache.pos = 0;
+	return (0);
+}
+
+static ssize_t
+fetch_read(void *ptr, size_t size, size_t nmemb, fetch_connect_t *conn)
+{
+	struct timeval now, timeout, delta;
+	fd_set readfds;
+	ssize_t rlen, total;
+	size_t len;
+	char *start, *buf;
+
+	if (quit_time > 0) {
+		gettimeofday(&timeout, NULL);
+		timeout.tv_sec += quit_time;
+	}
+
+	total = 0;
+	start = buf = ptr;
+	len = size * nmemb;
+
+	if (conn->cache.len > 0) {
+		/*
+		 * The last invocation of fetch_read was interrupted by a
+		 * signal after some data had been read from the socket. Copy
+		 * the cached data into the supplied buffer before trying to
+		 * read from the socket again.
+		 */
+		total = (conn->cache.len < len) ? conn->cache.len : len;
+		memcpy(buf, conn->cache.buf, total);
+
+		conn->cache.len -= total;
+		conn->cache.pos += total;
+		len -= total;
+		buf += total;
+	}
+
+	while (len > 0) {
+		/*
+		 * The socket is non-blocking.  Instead of the canonical
+		 * select() -> read(), we do the following:
+		 *
+		 * 1) call read() or SSL_read().
+		 * 2) if an error occurred, return -1.
+		 * 3) if we received data but we still expect more,
+		 *    update our counters and loop.
+		 * 4) if read() or SSL_read() signaled EOF, return.
+		 * 5) if we did not receive any data but we're not at EOF,
+		 *    call select().
+		 *
+		 * In the SSL case, this is necessary because if we
+		 * receive a close notification, we have to call
+		 * SSL_read() one additional time after we've read
+		 * everything we received.
+		 *
+		 * In the non-SSL case, it may improve performance (very
+		 * slightly) when reading small amounts of data.
+		 */
+		if (conn->ssl != NULL)
+			rlen = fetch_ssl_read(conn->ssl, buf, len);
+		else
+			rlen = fetch_nonssl_read(conn->sd, buf, len);
+		if (rlen == 0) {
+			break;
+		} else if (rlen > 0) {
+			len -= rlen;
+			buf += rlen;
+			total += rlen;
+			continue;
+		} else if (rlen == FETCH_READ_ERROR) {
+			if (errno == EINTR)
+				fetch_cache_data(conn, start, total);
+			return (-1);
+		}
+		FD_ZERO(&readfds);
+		while (!FD_ISSET(conn->sd, &readfds)) {
+			FD_SET(conn->sd, &readfds);
+			if (quit_time > 0) {
+				gettimeofday(&now, NULL);
+				if (!timercmp(&timeout, &now, >)) {
+					errno = ETIMEDOUT;
+					return (-1);
+				}
+				timersub(&timeout, &now, &delta);
+			}
+			errno = 0;
+			if (select(conn->sd + 1, &readfds, NULL, NULL,
+				quit_time > 0 ? &delta : NULL) < 0) {
+				if (errno == EINTR)
+					continue;
+				return (-1);
+			}
+		}
+	}
+	return (total);
+}
+
+#define MIN_BUF_SIZE 1024
+
+/*
+ * Read a line of text from a connection w/ timeout
+ */
+static char *
+fetch_getln(char *str, int size, fetch_connect_t *conn)
+{
+	size_t tmpsize;
+	ssize_t len;
+	char c;
+
+	if (conn->buf == NULL) {
+		if ((conn->buf = malloc(MIN_BUF_SIZE)) == NULL) {
+			errno = ENOMEM;
+			conn->iserr = 1;
+			return (NULL);
+		}
+		conn->bufsize = MIN_BUF_SIZE;
+	}
+
+	if (conn->iserr || conn->iseof)
+		return (NULL);
+
+	if (conn->buflen - conn->bufpos > 0)
+		goto done;
+
+	conn->buf[0] = '\0';
+	conn->bufpos = 0;
+	conn->buflen = 0;
+	do {
+		len = fetch_read(&c, sizeof(c), 1, conn);
+		if (len == -1) {
+			conn->iserr = 1;
+			return (NULL);
+		}
+		if (len == 0) {
+			conn->iseof = 1;
+			break;
+		}
+		conn->buf[conn->buflen++] = c;
+		if (conn->buflen == conn->bufsize) {
+			char *tmp = conn->buf;
+			tmpsize = conn->bufsize * 2 + 1;
+			if ((tmp = realloc(tmp, tmpsize)) == NULL) {
+				errno = ENOMEM;
+				conn->iserr = 1;
+				return (NULL);
+			}
+			conn->buf = tmp;
+			conn->bufsize = tmpsize;
+		}
+	} while (c != '\n');
+
+	if (conn->buflen == 0)
+		return (NULL);
+ done:
+	tmpsize = MIN(size - 1, (int)(conn->buflen - conn->bufpos));
+	memcpy(str, conn->buf + conn->bufpos, tmpsize);
+	str[tmpsize] = '\0';
+	conn->bufpos += tmpsize;
+	return (str);
+}
+
+static int
+fetch_getline(fetch_connect_t *conn, char *buf, size_t buflen,
+    const char **errormsg)
+{
+	size_t len;
+	int rv;
+
+	if (fetch_getln(buf, buflen, conn) == NULL) {
+		if (conn->iseof) {	/* EOF */
+			rv = -2;
+			if (errormsg)
+				*errormsg = "\nEOF received";
+		} else {		/* error */
+			rv = -1;
+			if (errormsg)
+				*errormsg = "Error encountered";
+		}
+		fetch_clearerr(conn);
+		return (rv);
+	}
+	len = strlen(buf);
+	if (buf[len - 1] == '\n') {	/* clear any trailing newline */
+		buf[--len] = '\0';
+	} else if (len == buflen - 1) {	/* line too long */
+		while (1) {
+			char c;
+			ssize_t rlen = fetch_read(&c, sizeof(c), 1, conn);
+			if (rlen <= 0 || c == '\n')
+				break;
+		}
+		if (errormsg)
+			*errormsg = "Input line is too long";
+		fetch_clearerr(conn);
+		return (-3);
+	}
+	if (errormsg)
+		*errormsg = NULL;
+	return (len);
+}
+
+static SSL *
+fetch_start_ssl(int sock)
+{
+	SSL *ssl;
+	SSL_CTX *ctx;
+	int ret, ssl_err;
+
+	/* Init the SSL library and context */
+	if (!SSL_library_init()){
+		fprintf(ttyout, "SSL library init failed\n");
+		return (NULL);
+	}
+
+	SSL_load_error_strings();
+
+	ctx = SSL_CTX_new(SSLv23_client_method());
+	SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
+
+	ssl = SSL_new(ctx);
+	if (ssl == NULL){
+		fprintf(ttyout, "SSL context creation failed\n");
+		SSL_CTX_free(ctx);
+		return (NULL);
+	}
+	SSL_set_fd(ssl, sock);
+	while ((ret = SSL_connect(ssl)) == -1) {
+		ssl_err = SSL_get_error(ssl, ret);
+		if (ssl_err != SSL_ERROR_WANT_READ &&
+		    ssl_err != SSL_ERROR_WANT_WRITE) {
+			ERR_print_errors_fp(ttyout);
+			SSL_free(ssl);
+			return (NULL);
+		}
+	}
+
+	if (ftp_debug && verbose) {
+		X509 *cert;
+		X509_NAME *name;
+		char *str;
+
+		fprintf(ttyout, "SSL connection established using %s\n",
+		    SSL_get_cipher(ssl));
+		cert = SSL_get_peer_certificate(ssl);
+		name = X509_get_subject_name(cert);
+		str = X509_NAME_oneline(name, 0, 0);
+		fprintf(ttyout, "Certificate subject: %s\n", str);
+		free(str);
+		name = X509_get_issuer_name(cert);
+		str = X509_NAME_oneline(name, 0, 0);
+		fprintf(ttyout, "Certificate issuer: %s\n", str);
+		free(str);
+	}
+
+	return (ssl);
+}
+
+#else	/* !WITH_SSL */
+#define	IS_HTTP_TYPE(urltype)	((urltype) == HTTP_URL_T)
+typedef FILE fetch_connect_t;
+#define	fetch_printf	fprintf
+#define	fetch_fileno	fileno
+#define	fetch_error	ferror
+#define	fetch_flush	fflush
+#define	fetch_open	fopen
+#define	fetch_fdopen	fdopen
+#define	fetch_close	fclose
+#define	fetch_read	fread
+#define	fetch_getln	fgets
+#define	fetch_getline	get_line
+#endif	/* !WITH_SSL */
 
 /*
  * Determine if token is the next word in buf (case insensitive).
@@ -346,6 +914,13 @@ parse_url(const char *url, const char *desc, url_t *utype,
 	} else if (STRNEQUAL(url, FILE_URL)) {
 		url += sizeof(FILE_URL) - 1;
 		*utype = FILE_URL_T;
+#ifdef WITH_SSL
+	} else if (STRNEQUAL(url, HTTPS_URL)) {
+		url += sizeof(HTTPS_URL) - 1;
+		*utype = HTTPS_URL_T;
+		*portnum = HTTPS_PORT;
+		tport = httpsport;
+#endif
 	} else {
 		warnx("Invalid %s `%s'", desc, url);
  cleanup_parse_url:
@@ -498,17 +1073,21 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 	char			*puser, *ppass, *useragent;
 	off_t			hashbytes, rangestart, rangeend, entitylen;
 	int			(*volatile closefunc)(FILE *);
-	FILE			*volatile fin;
+	fetch_connect_t		*volatile fin;
 	FILE			*volatile fout;
 	time_t			mtime;
 	url_t			urltype;
 	in_port_t		portnum;
+#ifdef WITH_SSL
+	SSL			*ssl;
+#endif
 
 	DPRINTF("fetch_url: `%s' proxyenv `%s'\n", url, STRorNULL(proxyenv));
 
 	oldintr = oldintp = NULL;
 	closefunc = NULL;
-	fin = fout = NULL;
+	fin = NULL;
+	fout = NULL;
 	s = -1;
 	savefile = NULL;
 	auth = location = message = NULL;
@@ -531,7 +1110,7 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 			rval = fetch_ftp(url);
 			goto cleanup_fetch_url;
 		}
-		if (urltype != HTTP_URL_T || outfile == NULL)  {
+		if (!IS_HTTP_TYPE(urltype) || outfile == NULL)  {
 			warnx("Invalid URL (no file after host) `%s'", url);
 			goto cleanup_fetch_url;
 		}
@@ -571,17 +1150,17 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 	}
 	if (urltype == FILE_URL_T) {		/* file:// URLs */
 		direction = "copied";
-		fin = fopen(decodedpath, "r");
+		fin = fetch_open(decodedpath, "r");
 		if (fin == NULL) {
 			warn("Can't open `%s'", decodedpath);
 			goto cleanup_fetch_url;
 		}
-		if (fstat(fileno(fin), &sb) == 0) {
+		if (fstat(fetch_fileno(fin), &sb) == 0) {
 			mtime = sb.st_mtime;
 			filesize = sb.st_size;
 		}
 		if (restart_point) {
-			if (lseek(fileno(fin), restart_point, SEEK_SET) < 0) {
+			if (lseek(fetch_fileno(fin), restart_point, SEEK_SET) < 0) {
 				warn("Can't seek to restart `%s'",
 				    decodedpath);
 				goto cleanup_fetch_url;
@@ -594,12 +1173,15 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 				    (LLT)restart_point);
 			fputs("\n", ttyout);
 		}
+		if (0 == rcvbuf_size) {
+			rcvbuf_size = 8 * 1024; /* XXX */
+		}
 	} else {				/* ftp:// or http:// URLs */
 		const char *leading;
 		int hasleading;
 
 		if (proxyenv == NULL) {
-			if (urltype == HTTP_URL_T)
+			if (IS_HTTP_TYPE(urltype))
 				proxyenv = getoptionvalue("http_proxy");
 			else if (urltype == FTP_URL_T)
 				proxyenv = getoptionvalue("ftp_proxy");
@@ -660,7 +1242,7 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 				    &ppath) == -1)
 					goto cleanup_fetch_url;
 
-				if ((purltype != HTTP_URL_T
+				if ((!IS_HTTP_TYPE(purltype)
 				     && purltype != FTP_URL_T) ||
 				    EMPTYSTRING(phost) ||
 				    (! EMPTYSTRING(ppath)
@@ -690,6 +1272,7 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 				FREEPTR(path);
 				path = ftp_strdup(url);
 				FREEPTR(ppath);
+				urltype = purltype;
 			}
 		} /* ! EMPTYSTRING(proxyenv) */
 
@@ -709,6 +1292,9 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 			host = res0->ai_canonname;
 
 		s = -1;
+#ifdef WITH_SSL
+		ssl = NULL;
+#endif
 		for (res = res0; res; res = res->ai_next) {
 			char	hname[NI_MAXHOST], sname[NI_MAXSERV];
 
@@ -741,6 +1327,16 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 				continue;
 			}
 
+#ifdef WITH_SSL
+			if (urltype == HTTPS_URL_T) {
+				if ((ssl = fetch_start_ssl(s)) == NULL) {
+					close(s);
+					s = -1;
+					continue;
+				}
+			}
+#endif
+
 			/* success */
 			break;
 		}
@@ -750,7 +1346,11 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 			goto cleanup_fetch_url;
 		}
 
-		fin = fdopen(s, "r+");
+		fin = fetch_fdopen(s, "r+");
+#ifdef WITH_SSL
+		if (urltype == HTTPS_URL_T)
+			fin->ssl = ssl;
+#endif
 		/*
 		 * Construct and send the request.
 		 */
@@ -765,11 +1365,11 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 				leading = ", ";
 				hasleading++;
 			}
-			fprintf(fin, "GET %s HTTP/1.0\r\n", path);
+			fetch_printf(fin, "GET %s HTTP/1.0\r\n", path);
 			if (flushcache)
-				fprintf(fin, "Pragma: no-cache\r\n");
+				fetch_printf(fin, "Pragma: no-cache\r\n");
 		} else {
-			fprintf(fin, "GET %s HTTP/1.1\r\n", path);
+			fetch_printf(fin, "GET %s HTTP/1.1\r\n", path);
 			if (strchr(host, ':')) {
 				char *h, *p;
 
@@ -782,18 +1382,23 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 				    (p = strchr(h, '%')) != NULL) {
 					*p = '\0';
 				}
-				fprintf(fin, "Host: [%s]", h);
+				fetch_printf(fin, "Host: [%s]", h);
 				free(h);
 			} else
-				fprintf(fin, "Host: %s", host);
+				fetch_printf(fin, "Host: %s", host);
+#ifdef WITH_SSL
+			if ((urltype == HTTP_URL_T && portnum != HTTP_PORT) ||
+			    (urltype == HTTPS_URL_T && portnum != HTTPS_PORT))
+#else
 			if (portnum != HTTP_PORT)
-				fprintf(fin, ":%u", portnum);
-			fprintf(fin, "\r\n");
-			fprintf(fin, "Accept: */*\r\n");
-			fprintf(fin, "Connection: close\r\n");
+#endif
+				fetch_printf(fin, ":%u", portnum);
+			fetch_printf(fin, "\r\n");
+			fetch_printf(fin, "Accept: */*\r\n");
+			fetch_printf(fin, "Connection: close\r\n");
 			if (restart_point) {
 				fputs(leading, ttyout);
-				fprintf(fin, "Range: bytes=" LLF "-\r\n",
+				fprintf(ttyout, "Range: bytes=" LLF "-\r\n",
 				    (LLT)restart_point);
 				fprintf(ttyout, "restarting at " LLF,
 				    (LLT)restart_point);
@@ -801,12 +1406,12 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 				hasleading++;
 			}
 			if (flushcache)
-				fprintf(fin, "Cache-Control: no-cache\r\n");
+				fetch_printf(fin, "Cache-Control: no-cache\r\n");
 		}
 		if ((useragent=getenv("FTPUSERAGENT")) != NULL) {
-			fprintf(fin, "User-Agent: %s\r\n", useragent);
+			fetch_printf(fin, "User-Agent: %s\r\n", useragent);
 		} else {
-			fprintf(fin, "User-Agent: %s/%s\r\n",
+			fetch_printf(fin, "User-Agent: %s/%s\r\n",
 			    FTP_PRODUCT, FTP_VERSION);
 		}
 		if (wwwauth) {
@@ -816,7 +1421,7 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 				leading = ", ";
 				hasleading++;
 			}
-			fprintf(fin, "Authorization: %s\r\n", wwwauth);
+			fetch_printf(fin, "Authorization: %s\r\n", wwwauth);
 		}
 		if (proxyauth) {
 			if (verbose) {
@@ -825,18 +1430,18 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 				leading = ", ";
 				hasleading++;
 			}
-			fprintf(fin, "Proxy-Authorization: %s\r\n", proxyauth);
+			fetch_printf(fin, "Proxy-Authorization: %s\r\n", proxyauth);
 		}
 		if (verbose && hasleading)
 			fputs(")\n", ttyout);
-		fprintf(fin, "\r\n");
-		if (fflush(fin) == EOF) {
+		fetch_printf(fin, "\r\n");
+		if (fetch_flush(fin) == EOF) {
 			warn("Writing HTTP request");
 			goto cleanup_fetch_url;
 		}
 
 				/* Read the response */
-		len = get_line(fin, buf, sizeof(buf), &errormsg);
+		len = fetch_getline(fin, buf, sizeof(buf), &errormsg);
 		if (len < 0) {
 			if (*errormsg == '\n')
 				errormsg++;
@@ -860,7 +1465,7 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 
 				/* Read the rest of the header. */
 		while (1) {
-			len = get_line(fin, buf, sizeof(buf), &errormsg);
+			len = fetch_getline(fin, buf, sizeof(buf), &errormsg);
 			if (len < 0) {
 				if (*errormsg == '\n')
 					errormsg++;
@@ -1148,7 +1753,7 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 		lastchunk = 0;
 					/* read chunk-size */
 		if (ischunked) {
-			if (fgets(xferbuf, bufsize, fin) == NULL) {
+			if (fetch_getln(xferbuf, bufsize, fin) == NULL) {
 				warnx("Unexpected EOF reading chunk-size");
 				goto cleanup_fetch_url;
 			}
@@ -1201,7 +1806,7 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 			if (ischunked)
 				bufrem = MIN(chunksize, bufrem);
 			while (bufrem > 0) {
-				flen = fread(xferbuf, sizeof(char),
+				flen = fetch_read(xferbuf, sizeof(char),
 				    MIN((off_t)bufsize, bufrem), fin);
 				if (flen <= 0)
 					goto chunkdone;
@@ -1240,7 +1845,7 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 					/* read CRLF after chunk*/
  chunkdone:
 		if (ischunked) {
-			if (fgets(xferbuf, bufsize, fin) == NULL) {
+			if (fetch_getln(xferbuf, bufsize, fin) == NULL) {
 				warnx("Unexpected EOF reading chunk CRLF");
 				goto cleanup_fetch_url;
 			}
@@ -1260,7 +1865,7 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 			(void)putc('#', ttyout);
 		(void)putc('\n', ttyout);
 	}
-	if (ferror(fin)) {
+	if (fetch_error(fin)) {
 		warn("Reading file");
 		goto cleanup_fetch_url;
 	}
@@ -1297,7 +1902,7 @@ fetch_url(const char *url, const char *proxyenv, char *proxyauth, char *wwwauth)
 	if (oldintp)
 		(void)xsignal(SIGPIPE, oldintp);
 	if (fin != NULL)
-		fclose(fin);
+		fetch_close(fin);
 	else if (s != -1)
 		close(s);
 	if (closefunc != NULL && fout != NULL)
@@ -1729,7 +2334,11 @@ go_fetch(const char *url)
 	/*
 	 * Check for file:// and http:// URLs.
 	 */
-	if (STRNEQUAL(url, HTTP_URL) || STRNEQUAL(url, FILE_URL))
+	if (STRNEQUAL(url, HTTP_URL)
+#ifdef WITH_SSL
+	    || STRNEQUAL(url, HTTPS_URL)
+#endif
+	    || STRNEQUAL(url, FILE_URL))
 		return (fetch_url(url, NULL, NULL, NULL));
 
 	/*

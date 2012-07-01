@@ -150,6 +150,9 @@ main(int volatile argc, char **volatile argv)
 
 	ftpport = "ftp";
 	httpport = "http";
+#ifdef WITH_SSL
+	httpsport = "https";
+#endif
 	gateport = NULL;
 	cp = getenv("FTPSERVERPORT");
 	if (cp != NULL)
@@ -1044,6 +1047,9 @@ usage(void)
 "           [[user@]host [port]] [host:path[/]] [file:///file]\n"
 "           [ftp://[user[:pass]@]host[:port]/path[/]]\n"
 "           [http://[user[:pass]@]host[:port]/path] [...]\n"
+#ifdef WITH_SSL
+"           [https://[user[:pass]@]host[:port]/path] [...]\n"
+#endif
 "       %s -u URL file [...]\n", progname, progname);
 	exit(1);
 }
