@@ -21,12 +21,16 @@
  * Declare the things that we need from the Linux headers.
  */
 
-#define	IS_ERR(ptr)	((unsigned long)(ptr) > (unsigned long)-1000L)
+#define MKDEV(ma,mi)	(((ma)<<8)|(mi))
 
-#define MKDEV(ma,mi)	((ma)<<8 | (mi))
+#define	S_IFBLK		0060000
+#define	S_IFCHR		0020000
 
-#define S_IFBLK		0060000
-#define S_IFCHR		0020000
+#ifndef	NULL
+#define	NULL		(void *)0
+#endif
+
+#define	GFP_KERNEL	0x1f0
 
 struct file;
 struct inode;
@@ -59,11 +63,14 @@ struct file_operations {
 
 extern	struct file *open_exec(const char *);
 extern	int kernel_read(struct file *, unsigned long, char *, unsigned long);
-extern	int memcmp(const void *, const void *, size_t);
 extern	int register_chrdev(unsigned int, const char *, struct file_operations *);
 extern	int unregister_chrdev(unsigned int, const char *);
 extern	void printk(const char *, ...) __printflike(1, 2);
+extern	int memcmp(const void *, const void *, size_t);
 extern	void *memcpy(void *, const void *, size_t);
+extern	void *memset(void *, int, size_t);
+extern	void *kmalloc(size_t, int);
+extern	void kfree(const void *);
 
 /* procfs support */
 struct proc_dir_entry {

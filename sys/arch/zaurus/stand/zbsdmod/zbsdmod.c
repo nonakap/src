@@ -17,6 +17,31 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+/*-
+ * Copyright (C) 2006-2012 NONAKA Kimihiro <nonaka@netbsd.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 /*
  * Zaurus NetBSD bootstrap loader.
  */
@@ -26,6 +51,8 @@
 #include <sys/exec_elf.h>
 #include <sys/types.h>
 #include <sys/errno.h>
+
+#include <arm/armreg.h>
 
 #include <machine/bootinfo.h>
 
@@ -76,25 +103,145 @@ static struct file_operations fops = {
 #endif	/* MAGIC_ROM_PTR */
 };
 
+/* driver status */
 static int isopen;
 static loff_t position;
 
-/* Outcast local variables to avoid stack usage in elf32bsdboot(). */
-static int cpsr;
-static unsigned int sz;
-static int i;
-static vaddr_t minv, maxv, posv;
-static vaddr_t elfv, shpv;
-static int *addr;
-static vaddr_t *esymp;
-static Elf_Shdr *shp;
-static Elf_Off off;
-static int havesyms;
+/* bootinfo */
+static union {
+	struct {
+		u_int magic;
+		char info[BOOTARGS_BUFSIZ - sizeof(u_int)];
+	} args __packed;
+	char buf[BOOTARGS_BUFSIZ];
+} bootargs;
 
-/* The maximum size of a kernel image is restricted to 5MB. */
-static u_int bsdimage[5242880/sizeof(u_int)];	/* XXX use kmalloc() */
-static char bootargs[BOOTARGS_BUFSIZ];
-static u_int datacacheclean[65536/sizeof(u_int)] __attribute__((aligned(32)));
+/* D-cache cleaning region */
+static u_int datacacheclean[65536/sizeof(u_int)] __aligned(32);
+
+/*
+ * page tag operations
+ */
+struct zbsdmod_page_tag {
+	struct zbsdmod_page_tag *next;
+	char *ptr;
+	uint32_t off;
+	uint32_t no;
+	uint32_t sz;
+} __packed __aligned(4);
+
+static struct zbsdmod_page_tag *page_tag_top;
+
+#define	ALLOC_SIZE	(4 * 1024)	/* PAGE_SIZE */
+#define	BUCKET_SIZE	(ALLOC_SIZE - sizeof(struct zbsdmod_page_tag))
+#define	ALLOC_FLAGS	(GFP_KERNEL)
+
+static inline struct zbsdmod_page_tag *
+zbsdmod_get_tag(uint32_t pos, int alloc)
+{
+	static struct zbsdmod_page_tag *tag;
+	static uint32_t pageno;
+
+	pageno = 0;
+	while (pos >= BUCKET_SIZE) {
+		pos -= BUCKET_SIZE;
+		pageno++;
+	}
+	for (tag = page_tag_top; tag != NULL; tag = tag->next) {
+		if (pageno == tag->no) {
+			tag->off = pos;
+			return tag;
+		}
+	}
+
+	if (!alloc)
+		return NULL;
+
+	tag = kmalloc(ALLOC_SIZE, ALLOC_FLAGS);
+	if (tag == NULL)
+		return NULL;
+	memset(tag, 0, ALLOC_SIZE);
+
+	tag->ptr = (char *)tag + sizeof(struct zbsdmod_page_tag);
+	tag->no = pageno;
+	tag->sz = 0;
+	tag->next = page_tag_top;
+	page_tag_top = tag;
+
+	tag->off = pos;
+	return tag;
+}
+
+static int
+zbsdmod_page_copy(uint32_t dst, const void *src, uint32_t size)
+{
+	struct zbsdmod_page_tag *tag;
+	size_t freesz;
+
+	while (size > 0) {
+		tag = zbsdmod_get_tag(dst, 1);
+		if (tag == NULL)
+			return ENOMEM;
+
+		freesz = BUCKET_SIZE - tag->off;
+		if (freesz > size)
+			freesz = size;
+
+		if (tag->sz < tag->off + freesz)
+			tag->sz = tag->off + freesz;
+
+		size -= freesz;
+		dst += freesz;
+
+		memcpy(tag->ptr + tag->off, src, freesz);
+		src = (const char *)src + freesz;
+	}
+	return 0;
+}
+
+static inline int
+zbsdmod_page_read(void *dst, uint32_t src, size_t size)
+{
+	static struct zbsdmod_page_tag *tag;
+	static size_t freesz;
+	static char *cpdst;
+
+	cpdst = dst;
+	while (size > 0) {
+		tag = zbsdmod_get_tag(src, 0);
+		if (tag == NULL)
+			return EINVAL;
+
+		freesz = BUCKET_SIZE - tag->off;
+		if (freesz > size)
+			freesz = size;
+
+		if ((tag->sz < tag->off) || (freesz > tag->sz - tag->off))
+			return EINVAL;
+
+		size -= freesz;
+		src += freesz;
+
+		/* don't use memcpy!!! */
+		while (freesz > 0) {
+			freesz--;
+			*cpdst++ = tag->ptr[tag->off++];
+		}
+	}
+	return 0;
+}
+
+static void
+zbsdmod_page_tag_cleanup(void)
+{
+	struct zbsdmod_page_tag *tag, *next;
+
+	for (tag = page_tag_top; tag != NULL; tag = next) {
+		next = tag->next;
+		kfree(tag);
+	}
+	page_tag_top = NULL;
+}
 
 /*
  * Boot the loaded BSD kernel image, or return if an error is found.
@@ -103,24 +250,50 @@ static u_int datacacheclean[65536/sizeof(u_int)] __attribute__((aligned(32)));
 static void
 elf32bsdboot(void)
 {
+	static vaddr_t minv, maxv, posv;
+	static vaddr_t ehv, shdrv;
+	static vaddr_t *esymp;
+	static Elf_Ehdr eh;
+	static Elf_Phdr *phdr;
+	static Elf_Shdr *shdr;
+	static Elf_Off off;
+	static int havesyms;
+	static int cpsr, ocpsr;
+	static u_int sz;
+	static const char *cpsrc;
+	static char *cpdst;
+	static int i;
+	static int rv;
 
-#define elf	((Elf32_Ehdr *)bsdimage)
-#define phdr	((Elf32_Phdr *)((char *)elf + elf->e_phoff))
-
-	if (memcmp(elf->e_ident, ELFMAG, SELFMAG) != 0 ||
-	    elf->e_ident[EI_CLASS] != ELFCLASS32)
+	rv = zbsdmod_page_read(&eh, 0, sizeof(eh));
+	if (rv) {
+		printk("%s: couldn't read Elf_Ehdr. rv=%d\n", __func__, rv);
+		return;
+	}
+	if (memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0 ||
+	    eh.e_ident[EI_CLASS] != ELFCLASS32)
 		return;
 
 	minv = (vaddr_t)~0;
 	maxv = (vaddr_t)0;
 	posv = (vaddr_t)0;
-	esymp = 0;
+	esymp = NULL;
 
 	/*
 	 * Get min and max addresses used by the loaded kernel.
 	 */
-	for (i = 0; i < elf->e_phnum; i++) {
-
+	sz = eh.e_phnum * eh.e_phentsize;
+	phdr = kmalloc(sz, ALLOC_FLAGS);
+	if (phdr == NULL) {
+		printk("%s: couldn't alloc memory(Elf_Phdr)\n", __func__);
+		return;
+	}
+	rv = zbsdmod_page_read(phdr, eh.e_phoff, sz);
+	if (rv) {
+		printk("%s: couldn't read Elf_Phdr. rv=%d\n", __func__, rv);
+		goto free_phdr;
+	}
+	for (i = 0; i < eh.e_phnum; i++) {
 		if (phdr[i].p_type != PT_LOAD ||
 		    (phdr[i].p_flags & (PF_W|PF_R|PF_X)) == 0)
 			continue;
@@ -152,29 +325,45 @@ elf32bsdboot(void)
 			esymp = (vaddr_t *)phdr[i].p_vaddr;
 	}
 
-	__asm volatile ("mrs %0, cpsr_all" : "=r" (cpsr));
-	cpsr |= 0xc0;  /* set FI */
-	__asm volatile ("msr cpsr_all, %0" :: "r" (cpsr));
+	/*
+	 * Copy ELF section headers.
+	 */
+	sz = eh.e_shnum * eh.e_shentsize;
+	shdr = kmalloc(sz, ALLOC_FLAGS);
+	if (shdr == NULL) {
+		printk("%s: couldn't alloc memory(Elf_Shdr)\n", __func__);
+		goto free_phdr;
+	}
+	rv = zbsdmod_page_read(shdr, eh.e_shoff, sz);
+	if (rv) {
+		printk("%s: couldn't read Elf_Shdr. rv=%d\n", __func__, rv);
+		goto free_shp;
+	}
+
+	/* Disable interrupt. */
+	__asm volatile ("mrs %0, cpsr_all" : "=r" (ocpsr) :: "memory");
+	cpsr = ocpsr | IF32_bits;
+	__asm volatile ("msr cpsr_all, %0" :: "r" (cpsr) : "memory");
 
 	/*
 	 * Copy the boot arguments.
 	 */
 	sz = BOOTARGS_BUFSIZ;
+	cpsrc = bootargs.buf;
+	cpdst = (char *)(minv - BOOTARGS_BUFSIZ);
 	while (sz > 0) {
 		sz--;
-		((char *)minv - BOOTARGS_BUFSIZ)[sz] = bootargs[sz];
+		*cpdst++ = *cpsrc++;
 	}
 
 	/*
 	 * Set up pointers to copied ELF and section headers.
 	 */
 #define roundup(x, y)	((((x)+((y)-1))/(y))*(y))
-	elfv = maxv = roundup(maxv, sizeof(long));
+	ehv = maxv = roundup(maxv, sizeof(long));
 	maxv += sizeof(Elf_Ehdr);
-
-	sz = elf->e_shnum * sizeof(Elf_Shdr);
-	shp = (Elf_Shdr *)((vaddr_t)elf + elf->e_shoff);
-	shpv = maxv;
+	sz = eh.e_shnum * eh.e_shentsize;
+	shdrv = maxv;
 	maxv += roundup(sz, sizeof(long));
 
 	/*
@@ -184,24 +373,23 @@ elf32bsdboot(void)
 	 * there are no symbol sections.
 	 */
 	off = roundup((sizeof(Elf_Ehdr) + sz), sizeof(long));
-	for (havesyms = i = 0; i < elf->e_shnum; i++)
-		if (shp[i].sh_type == SHT_SYMTAB)
+	havesyms = 0;
+	for (i = 0; i < eh.e_shnum; i++) {
+		if (shdr[i].sh_type == SHT_SYMTAB) {
 			havesyms = 1;
-	for (i = 0; i < elf->e_shnum; i++) {
-		if (shp[i].sh_type == SHT_SYMTAB ||
-		    shp[i].sh_type == SHT_STRTAB) {
+			break;
+		}
+	}
+	for (i = 0; i < eh.e_shnum; i++) {
+		if (shdr[i].sh_type == SHT_SYMTAB ||
+		    shdr[i].sh_type == SHT_STRTAB) {
 			if (havesyms) {
-				sz = shp[i].sh_size;
-				while (sz > 0) {
-					sz--;
-					((char *)maxv)[sz] =
-					    ((char *)elf +
-						shp[i].sh_offset)[sz];
-				}
+				(void)zbsdmod_page_read((void *)maxv,
+				    shdr[i].sh_offset, shdr[i].sh_size);
 			}
-			maxv += roundup(shp[i].sh_size, sizeof(long));
-			shp[i].sh_offset = off;
-			off += roundup(shp[i].sh_size, sizeof(long));
+			maxv += roundup(shdr[i].sh_size, sizeof(long));
+			shdr[i].sh_offset = off;
+			off += roundup(shdr[i].sh_size, sizeof(long));
 		}
 	}
 
@@ -209,62 +397,63 @@ elf32bsdboot(void)
 	 * Copy the ELF and section headers.
 	 */
 	sz = sizeof(Elf_Ehdr);
+	cpsrc = (char *)&eh;
+	cpdst = (char *)ehv;
 	while (sz > 0) {
 		sz--;
-		((char *)elfv)[sz] = ((char *)elf)[sz];
+		*cpdst++ = *cpsrc++;
 	}
-	sz = elf->e_shnum * sizeof(Elf_Shdr);
+
+	sz = eh.e_shnum * eh.e_shentsize;
+	cpsrc = (char *)shdr;
+	cpdst = (char *)shdrv;
 	while (sz > 0) {
 		sz--;
-		((char *)shpv)[sz] = ((char *)shp)[sz];
+		*cpdst++ = *cpsrc++;
 	}
 
 	/*
-	 * Frob the copied ELF header to give information relative
-	 * to elfv.
+	 * Frob the copied ELF header to give information relative to ehv.
 	 */
-	((Elf_Ehdr *)elfv)->e_phoff = 0;
-	((Elf_Ehdr *)elfv)->e_shoff = sizeof(Elf_Ehdr);
-	((Elf_Ehdr *)elfv)->e_phentsize = 0;
-	((Elf_Ehdr *)elfv)->e_phnum = 0;
+	((Elf_Ehdr *)ehv)->e_phoff = 0;
+	((Elf_Ehdr *)ehv)->e_shoff = sizeof(Elf_Ehdr);
+	((Elf_Ehdr *)ehv)->e_phentsize = 0;
+	((Elf_Ehdr *)ehv)->e_phnum = 0;
 
 	/*
 	 * Tell locore.S where the symbol table ends, and arrange
 	 * to skip esym when loading the data section.
 	 */
-	if (esymp != 0)
+	if (esymp != NULL) {
 		*esymp = (vaddr_t)maxv;
-	for (i = 0; esymp != 0 && i < elf->e_phnum; i++) {
-		if (phdr[i].p_type != PT_LOAD ||
-		    (phdr[i].p_flags & (PF_W|PF_R|PF_X)) == 0)
-			continue;
-		if (phdr[i].p_vaddr == (vaddr_t)esymp) {
-			phdr[i].p_vaddr = (vaddr_t)((char *)phdr[i].p_vaddr + sizeof(long));
-			phdr[i].p_offset = (vaddr_t)((char *)phdr[i].p_offset + sizeof(long));
-			phdr[i].p_filesz -= sizeof(long);
-			break;
+		for (i = 0; i < eh.e_phnum; i++) {
+			if (phdr[i].p_type != PT_LOAD ||
+			    (phdr[i].p_flags & (PF_W|PF_R|PF_X)) == 0)
+				continue;
+
+			if (phdr[i].p_vaddr == (vaddr_t)esymp) {
+				phdr[i].p_vaddr += sizeof(long);
+				phdr[i].p_offset += sizeof(long);
+				phdr[i].p_filesz -= sizeof(long);
+				break;
+			}
 		}
 	}
 
 	/*
 	 * Load text and data.
 	 */
-	for (i = 0; i < elf->e_phnum; i++) {
+	for (i = 0; i < eh.e_phnum; i++) {
 		if (phdr[i].p_type != PT_LOAD ||
 		    (phdr[i].p_flags & (PF_W|PF_R|PF_X)) == 0)
 			continue;
 
 		if (IS_TEXT(phdr[i]) || IS_DATA(phdr[i])) {
-			sz = phdr[i].p_filesz;
-			while (sz > 0) {
-				sz--;
-				((char *)phdr[i].p_vaddr)[sz] =
-				    (((char *)elf) + phdr[i].p_offset)[sz];
-			}
+			(void)zbsdmod_page_read((void *)phdr[i].p_vaddr,
+			    phdr[i].p_offset, phdr[i].p_filesz);
 		}
 	}
 
-	addr = (int *)(elf->e_entry);
 	__asm volatile (
 		/* Clean D-cache */
 		"mov	r0, %1;"
@@ -283,14 +472,21 @@ elf32bsdboot(void)
 		"mrc	p15, 0, r1, c2, c0, 0;" /* CPWAIT */
 		"mov	r1, r1;"
 		"sub	pc, pc, #4;"
-		"mov	r1, #(0x00000010 | 0x00000020);"
+		"mov	r1, #(0x10|0x20);"	/* CPU_CONTROL_32BD|BP_ENABLE */
 		"mcr	p15, 0, r1, c1, c0, 0;" /* Write new control register */
 		"mcr	p15, 0, r1, c8, c7, 0;" /* invalidate I+D TLB */
 		"mcr	p15, 0, r1, c7, c5, 0;" /* invalidate I$ and BTB */
 		"mcr	p15, 0, r1, c7, c10, 4;" /*drain write and fill buffer*/
 		"mrc	p15, 0, r1, c2, c0, 0;" /* CPWAIT_AND_RETURN */
 		"sub	pc, r0, r1, lsr #32;"
-		:: "r" (addr), "r" (datacacheclean) : "r0", "r1", "r2");
+		: /* Nothing */
+		: "r" (eh.e_entry), "r" (datacacheclean)
+		: "r0", "r1", "r2", "memory");
+
+free_shp:
+	kfree(shdr);
+free_phdr:
+	kfree(phdr);
 }
 
 /*
@@ -300,25 +496,24 @@ int
 init_module(void)
 {
 	struct proc_dir_entry *entry;
-	int rc;
+	int error;
 
-	rc = register_chrdev(ZBOOTDEV_MAJOR, ZBOOTDEV_NAME, &fops);
-	if (rc != 0) {
+	error = register_chrdev(ZBOOTDEV_MAJOR, ZBOOTDEV_NAME, &fops);
+	if (error) {
 		printk("%s: register_chrdev(%d, ...): error %d\n",
-		    ZBOOTMOD_NAME, ZBOOTDEV_MAJOR, -rc);
+		    ZBOOTMOD_NAME, ZBOOTDEV_MAJOR, -error);
 		return 1;
 	}
 
 	entry = proc_mknod(ZBOOTDEV_NAME, ZBOOTDEV_MODE | S_IFCHR,
 	    &proc_root, MKDEV(ZBOOTDEV_MAJOR, 0));
-	if (entry == (struct proc_dir_entry *)0) {
-		(void)unregister_chrdev(ZBOOTDEV_MAJOR, ZBOOTDEV_NAME);
+	if (entry == NULL) {
+		(void) unregister_chrdev(ZBOOTDEV_MAJOR, ZBOOTDEV_NAME);
 		return 1;
 	}
 
 	printk("%s: NetBSD/" MACHINE " bootstrap device is %d,0\n",
 	    ZBOOTMOD_NAME, ZBOOTDEV_MAJOR);
-
 	return 0;
 }
 
@@ -329,8 +524,10 @@ void
 cleanup_module(void)
 {
 
-	(void)unregister_chrdev(ZBOOTDEV_MAJOR, ZBOOTDEV_NAME);
+	(void) unregister_chrdev(ZBOOTDEV_MAJOR, ZBOOTDEV_NAME);
 	remove_proc_entry(ZBOOTDEV_NAME, &proc_root);
+
+	zbsdmod_page_tag_cleanup();
 
 	printk("%s: NetBSD/" MACHINE " bootstrap device unloaded\n",
 	    ZBOOTMOD_NAME);
@@ -339,14 +536,16 @@ cleanup_module(void)
 static ssize_t
 zbsdmod_write(struct file *f, const char *buf, size_t len, loff_t *offp)
 {
+	int error;
 
 	if (len < 1)
 		return 0;
 
-	if (*offp + len >= sizeof(bsdimage))
-		return -EFBIG;
-
-	memcpy(((char *)bsdimage) + *offp, buf, len);
+	error = zbsdmod_page_copy(*offp, buf, len);
+	if (error) {
+		position = 0;
+		return -error;
+	}
 
 	*offp += len;
 	if (*offp > position)
@@ -380,13 +579,14 @@ zbsdmod_close(struct inode *ino, struct file *f)
 	if (position > 0) {
 		printk("%s: loaded %ld bytes\n", ZBOOTDEV_NAME, position);
 		if (position < (loff_t)BOOTINFO_MAXSIZE) {
-			*(u_int *)bootargs = BOOTARGS_MAGIC;
-			memcpy(bootargs + sizeof(u_int), bsdimage, position);
+			bootargs.args.magic = BOOTARGS_MAGIC;
+			zbsdmod_page_read(bootargs.args.info, 0, position);
 		} else {
 			elf32bsdboot();
 			printk("%s: boot failed\n", ZBOOTDEV_NAME);
 		}
 	}
+	zbsdmod_page_tag_cleanup();
 	isopen = 0;
 
 	return 0;
