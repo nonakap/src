@@ -1,0 +1,91 @@
+#
+# KOHARU
+#
+
+include "arch/amd64/conf/GENERIC"
+
+makeoptions	DEBUG="-g"
+
+options 	DDB_ONPANIC=1	# see also sysctl(8): `ddb.onpanic'
+options 	DDB_VERBOSE_HELP
+options 	PCIVERBOSE	# verbose PCI device autoconfig messages
+options 	USBVERBOSE	# verbose USB device autoconfig messages
+options 	UFS_DIRHASH	# UFS Large Directory Hashing
+options 	GATEWAY		# packet forwarding
+
+options 	MSGBUFSIZE="(65536*2)"
+
+options 	ALTQ		# Manipulate network interfaces' output queues
+options 	ALTQ_BLUE	# Stochastic Fair Blue
+options 	ALTQ_CBQ	# Class-Based Queueing
+options 	ALTQ_CDNR	# Diffserv Traffic Conditioner
+options 	ALTQ_FIFOQ	# First-In First-Out Queue
+options 	ALTQ_FLOWVALVE	# RED/flow-valve (red-penalty-box)
+options 	ALTQ_HFSC	# Hierarchical Fair Service Curve
+options 	ALTQ_LOCALQ	# Local queueing discipline
+options 	ALTQ_PRIQ	# Priority Queueing
+options 	ALTQ_RED	# Random Early Detection
+options 	ALTQ_RIO	# RED with IN/OUT
+options 	ALTQ_WFQ	# Weighted Fair Queueing
+
+options 	BRIDGE_IPF	# bridge uses IP/IPv6 pfil hooks too
+pseudo-device	pf		# PF packet filter
+pseudo-device	pflog		# PF log if
+pseudo-device	pfsync		# PF sync if
+
+no aibs
+no asus
+no fujbp
+no fujhk
+no hpqlb
+no sony
+no spic
+no ug
+no wmidell
+no wmieeepc
+no wmihp
+no wmimsi
+
+no viadrm
+
+no isapnp
+no pcmcia
+no cardbus
+no cardslot
+no cbb
+
+#no options	COMPAT_OSSAUDIO
+#no options	COMPAT_LINUX
+#no options	COMPAT_LINUX32
+#no options	COMPAT_NETBSD32
+#no options	EXEC_ELF32
+
+no file-system	EXT2FS
+no file-system	LFS
+no file-system	MFS
+no file-system	NTFS
+no file-system	CD9660
+no file-system	MSDOSFS
+no file-system	FDESC
+no file-system	KERNFS
+no file-system	NULLFS
+no file-system	OVERLAY
+no file-system	PROCFS
+no file-system	PUFFS
+no file-system	UMAPFS
+no file-system	UNION
+no file-system	CODA
+no file-system	SMBFS
+no file-system	PTYFS
+
+no pseudo-device	vcoda
+no pseudo-device	veriexec
+
+#options 	KICONV
+#options 	KICONV_ALL_ENCODING
+#options 	KICONV_ALL_ICONV
+#options 	KICONV_ALL_MAPPER
+#options 	KICONV_DEBUG
+
+#options 	SDHC_DEBUG
+#options 	SDMMC_DEBUG
