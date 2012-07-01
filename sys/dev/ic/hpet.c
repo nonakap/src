@@ -79,7 +79,7 @@ hpet_attach_subr(device_t dv)
 
 	tc->tc_name = device_xname(dv);
 	tc->tc_get_timecount = hpet_get_timecount;
-	tc->tc_quality = 2000;
+	tc->tc_quality = 4000;	/* XXX beat TSC */
 
 	tc->tc_counter_mask = 0xffffffff;
 
