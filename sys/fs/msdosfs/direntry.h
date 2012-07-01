@@ -66,7 +66,9 @@ struct direntry {
 #define	ATTR_VOLUME	0x08		/* entry is a volume label */
 #define	ATTR_DIRECTORY	0x10		/* entry is a directory name */
 #define	ATTR_ARCHIVE	0x20		/* file is new or modified */
-	u_int8_t	deReserved;	/* reserved */
+	u_int8_t	deLowerCase;	/* NT VFAT lower case flags */
+#define	LCASE_BASE	0x08		/* filename base in lower case */
+#define	LCASE_EXT	0x10		/* filename extension in lower case */
 	u_int8_t	deCHundredth;	/* hundredth of seconds in CTime */
 	u_int8_t	deCTime[2];	/* create time */
 	u_int8_t	deCDate[2];	/* create date */
@@ -122,19 +124,28 @@ struct winentry {
 
 #if defined(_KERNEL) || defined(MAKEFS)
 struct dirent;
+struct msdosfs_winfn;
+
 void	unix2dostime(const struct timespec *tsp, int gmtoff, u_int16_t *ddp,
 	    u_int16_t *dtp, u_int8_t *dhp);
 void	dos2unixtime(u_int dd, u_int dt, u_int dh, int gmtoff,
 	    struct timespec *tsp);
-int	dos2unixfn(u_char dn[11], u_char *un, int lower);
-int	unix2dosfn(const u_char *un, u_char dn[12], int unlen,
-	    u_int gen);
-int	unix2winfn(const u_char *un, int unlen, struct winentry *wep,
-	    int cnt, int chksum);
-int	winChkName(const u_char *un, int unlen, struct winentry *wep,
-	    int chksum);
-int	win2unixfn(struct winentry *wep, struct dirent *dp, int chksum);
+int	dos2unixfn(u_char dn[11], u_char *un, int lower,
+	    struct msdosfsmount *pmp);
+int	unix2dosfn(struct msdosfs_winfn *fn, u_char dn[12], u_int gen,
+	    struct msdosfsmount *pmp);
+int	unix2winfn(struct msdosfs_winfn *fn, struct winentry *wep,
+	    int cnt, int chksum, struct msdosfsmount *pmp);
+int	winChkName(struct msdosfs_winfn *fn, struct winentry *wep,
+	    int chksum, struct msdosfsmount *pmp);
+int	win2unixfn(struct winentry *wep, struct dirent *dp, int chksum,
+	    struct msdosfsmount *pmp);
 u_int8_t winChksum(u_int8_t *name);
-int	winSlotCnt(const u_char *un, int unlen);
+int	winSlotCnt(struct msdosfs_winfn *fn, struct msdosfsmount *pmp);
+int	newwinfn(struct componentname *cnp, struct msdosfs_winfn **fnp,
+	    struct msdosfsmount *pmp);
+void	freewinfn(struct msdosfs_winfn *fn, struct msdosfsmount *pmp);
+int	msdosfs_initkiconv(struct msdosfsmount *pmp);
+void	msdosfs_finikiconv(struct msdosfsmount *pmp);
 #endif /* _KERNEL || MAKEFS */
 #endif /* _MSDOSFS_DIRENTRY_H_ */

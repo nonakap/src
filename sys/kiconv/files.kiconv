@@ -1,0 +1,117 @@
+# $NetBSD$
+
+#
+# in-kernel iconv
+#
+
+defflag	KICONV
+defflag	KICONV_MODULE: KICONV
+
+file	kiconv/kiconv.c				kiconv
+file	kiconv/citrus_bcs.c			kiconv
+file	kiconv/citrus_bcs_strtol.c		kiconv
+file	kiconv/citrus_bcs_strtoul.c		kiconv
+file	kiconv/citrus_csmapper.c		kiconv
+file	kiconv/citrus_ctype.c			kiconv
+file	kiconv/citrus_ctype_fallback.c		kiconv
+file	kiconv/citrus_db.c			kiconv
+file	kiconv/citrus_db_hash.c			kiconv
+file	kiconv/citrus_esdb.c			kiconv
+file	kiconv/citrus_hash.c			kiconv
+file	kiconv/citrus_iconv.c			kiconv
+file	kiconv/citrus_lc_ctype.c		kiconv
+file	kiconv/citrus_lookup.c			kiconv
+file	kiconv/citrus_mapper.c			kiconv
+file	kiconv/citrus_memstream.c		kiconv
+file	kiconv/citrus_mmap.c			kiconv
+file	kiconv/citrus_module.c			kiconv
+file	kiconv/citrus_none.c			kiconv
+file	kiconv/citrus_prop.c			kiconv
+file	kiconv/citrus_stdenc.c			kiconv
+
+file	kiconv/ctype_.c				kiconv
+file	kiconv/locale.c				kiconv
+file	kiconv/rune.c				kiconv
+file	kiconv/runetable.c			kiconv
+file	kiconv/tolower_.c			kiconv
+file	kiconv/toupper_.c			kiconv
+file	kiconv/_wctrans.c			kiconv
+file	kiconv/_wctype.c			kiconv
+
+#
+# encoding modules
+#
+defflag	KICONV_BIG5: KICONV_MODULE
+defflag	KICONV_DECHANYU: KICONV_MODULE
+defflag	KICONV_EUC: KICONV_MODULE
+defflag	KICONV_EUCTW: KICONV_MODULE
+defflag	KICONV_GBK2K: KICONV_MODULE
+defflag	KICONV_HZ: KICONV_MODULE
+defflag	KICONV_ISO2022: KICONV_MODULE
+defflag	KICONV_JOHAB: KICONV_MODULE
+defflag	KICONV_MSKANJI: KICONV_MODULE
+defflag	KICONV_UES: KICONV_MODULE
+defflag	KICONV_UTF1632: KICONV_MODULE
+defflag	KICONV_UTF7: KICONV_MODULE
+defflag	KICONV_UTF8: KICONV_MODULE
+defflag	KICONV_VIQR: KICONV_MODULE
+defflag	KICONV_ZW: KICONV_MODULE
+defflag	KICONV_UTF16: KICONV_UTF1632
+defflag	KICONV_UTF32: KICONV_UTF1632
+defflag	KICONV_ALL_ENCODING: KICONV_BIG5, KICONV_DECHANYU, KICONV_EUC,
+	                     KICONV_EUCTW, KICONV_GBK2K, KICONV_HZ,
+	                     KICONV_ISO2022, KICONV_JOHAB, KICONV_MSKANJI,
+	                     KICONV_UES, KICONV_UTF1632, KICONV_UTF7,
+	                     KICONV_UTF8, KICONV_VIQR, KICONV_ZW
+
+file	kiconv/modules/citrus_big5.c		kiconv & kiconv_big5
+file	kiconv/modules/citrus_dechanyu.c	kiconv & kiconv_dechanyu
+file	kiconv/modules/citrus_euc.c		kiconv & kiconv_euc
+file	kiconv/modules/citrus_euctw.c		kiconv & kiconv_euctw
+file	kiconv/modules/citrus_gbk2k.c		kiconv & kiconv_bgk2k
+file	kiconv/modules/citrus_hz.c		kiconv & kiconv_hz
+file	kiconv/modules/citrus_iso2022.c		kiconv & kiconv_iso2022
+file	kiconv/modules/citrus_johab.c		kiconv & kiconv_johab
+file	kiconv/modules/citrus_mskanji.c		kiconv & kiconv_mskanji
+file	kiconv/modules/citrus_ues.c		kiconv & kiconv_ues
+file	kiconv/modules/citrus_utf1632.c		kiconv & kiconv_utf1632
+file	kiconv/modules/citrus_utf7.c		kiconv & kiconv_utf7
+file	kiconv/modules/citrus_utf8.c		kiconv & kiconv_utf8
+file	kiconv/modules/citrus_viqr.c		kiconv & kiconv_viqr
+file	kiconv/modules/citrus_zw.c		kiconv & kiconv_zw
+
+#
+# iconv module
+#
+defflag	KICONV_ICONV_NONE: KICONV_MODULE
+defflag	KICONV_ICONV_STD: KICONV_MODULE
+defflag	KICONV_ALL_ICONV: KICONV_ICONV_NONE, KICONV_ICONV_STD
+
+file	kiconv/modules/citrus_iconv_none.c	kiconv & kiconv_iconv_none
+file	kiconv/modules/citrus_iconv_std.c	kiconv & kiconv_iconv_std
+
+#
+# mapper module
+#
+defflag	KICONV_MAPPER_646: KICONV_MODULE
+defflag	KICONV_MAPPER_NONE: KICONV_MODULE
+defflag	KICONV_MAPPER_SERIAL: KICONV_MODULE
+defflag	KICONV_MAPPER_PARALLEL: KICONV_MODULE
+defflag	KICONV_MAPPER_STD: KICONV_MODULE
+defflag	KICONV_MAPPER_ZONE: KICONV_MODULE
+defflag	KICONV_ALL_MAPPER: KICONV_MAPPER_646, KICONV_MAPPER_NONE,
+	                   KICONV_MAPPER_SERIAL, KICONV_MAPPER_PARALLEL,
+	                   KICONV_MAPPER_STD, KICONV_MAPPER_ZONE
+
+file	kiconv/modules/citrus_mapper_646.c	kiconv & kiconv_mapper_646
+file	kiconv/modules/citrus_mapper_none.c	kiconv & kiconv_mapper_none
+file	kiconv/modules/citrus_mapper_serial.c	kiconv & (kiconv_mapper_serial | kiconv_mapper_parallel)
+file	kiconv/modules/citrus_mapper_std.c	kiconv & kiconv_mapper_std
+file	kiconv/modules/citrus_mapper_zone.c	kiconv & kiconv_mapper_zone
+
+#
+# compile options
+#
+makeoptions kiconv		CPPFLAGS+="-I${S}/kiconv"
+makeoptions kiconv		CPPFLAGS+="-I${NETBSDSRCDIR}/common/lib/libc/stdlib"
+makeoptions kiconv_module	CPPFLAGS+="-I${S}/kiconv/modules"

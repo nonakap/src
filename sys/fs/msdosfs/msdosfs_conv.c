@@ -64,6 +64,10 @@ __KERNEL_RCSID(0, "$NetBSD: msdosfs_conv.c,v 1.9 2013/01/26 16:51:51 christos Ex
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/vnode.h>
+#include <sys/malloc.h>
+#include <sys/namei.h>
+#if !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+#include <sys/kiconv.h>
 #else
 #include <stdio.h>
 #include <dirent.h>
@@ -73,8 +77,22 @@ __KERNEL_RCSID(0, "$NetBSD: msdosfs_conv.c,v 1.9 2013/01/26 16:51:51 christos Ex
 /*
  * MSDOSFS include files.
  */
+#include <fs/msdosfs/bpb.h>
 #include <fs/msdosfs/direntry.h>
 #include <fs/msdosfs/denode.h>
+#include <fs/msdosfs/msdosfsmount.h>
+
+struct msdosfs_winfn {
+	const u_char *un;	/* unix filename */
+	int unlen;		/* unix filename length */
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+	u_char *wn;		/* UTF-16LE filename */
+	u_char *lcwn;		/* lower case UTF-16LE filename */
+	int wnlen;		/* win filename length */
+	wchar_t *wcs;
+	int wcslen;
+#endif
+};
 
 /*
  * Days in each month in a regular year.
@@ -348,17 +366,1113 @@ u2l[256] = {
  * extension are not long enough to fill their respective fields.
  */
 
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+struct msdosfs_kiconv {
+	klocale_t l;	/* default locale */
+
+	kiconv_t cih;	/* codepage -> iocharset */
+	kiconv_t cdh;	/* codepage -> default encoding */
+	kiconv_t dch;	/* default encoding -> codepage */
+	kiconv_t idh;	/* iocharset -> default encoding */
+	kiconv_t dih;	/* default encoding -> iocharset */
+	kiconv_t udh;	/* UTF-16LE -> default encoding */
+	kiconv_t duh;	/* default encoding -> UTF-16LE */
+};
+
+int
+msdosfs_initkiconv(struct msdosfsmount *pmp)
+{
+	struct msdosfs_kiconv *fcp;
+	int errno;
+
+	if (pmp->pm_codepage[0] == '\0' || pmp->pm_iocharset[0] == '\0') {
+		pmp->pm_kiconvcookie = NULL;
+		pmp->pm_flags &= ~MSDOSFS_CONVERTFNAME;
+		return 0;
+	}
+
+	fcp = malloc(sizeof(*fcp), M_MSDOSFSTMP, M_WAITOK);
+	fcp->cih = fcp->cdh = fcp->dch = fcp->idh = fcp->dih =
+	    fcp->udh = fcp->duh = (kiconv_t)-1;
+
+	fcp->l = kiconv_newlocale(NULL, &errno);
+
+	fcp->cih = kiconv_open(pmp->pm_iocharset, pmp->pm_codepage, &errno);
+	if (fcp->cih == (kiconv_t)-1)
+		goto error;
+	fcp->cdh = kiconv_open(NULL, pmp->pm_codepage, &errno);
+	if (fcp->cdh == (kiconv_t)-1)
+		goto error;
+	fcp->dch = kiconv_open(pmp->pm_codepage, NULL, &errno);
+	if (fcp->dch == (kiconv_t)-1)
+		goto error;
+	fcp->dih = kiconv_open(pmp->pm_iocharset, NULL, &errno);
+	if (fcp->dih == (kiconv_t)-1)
+		goto error;
+	fcp->idh = kiconv_open(NULL, pmp->pm_iocharset, &errno);
+	if (fcp->idh == (kiconv_t)-1)
+		goto error;
+	fcp->udh = kiconv_open(NULL, "UTF-16LE", &errno);
+	if (fcp->udh == (kiconv_t)-1)
+		goto error;
+	fcp->duh = kiconv_open("UTF-16LE", NULL, &errno);
+	if (fcp->duh == (kiconv_t)-1)
+		goto error;
+
+	pmp->pm_kiconvcookie = fcp;
+	pmp->pm_flags |= MSDOSFS_CONVERTFNAME;
+	return 0;
+
+error:
+	if (fcp->duh != (kiconv_t)-1)
+		kiconv_close(fcp->duh, &errno);
+	if (fcp->udh != (kiconv_t)-1)
+		kiconv_close(fcp->udh, &errno);
+	if (fcp->idh != (kiconv_t)-1)
+		kiconv_close(fcp->idh, &errno);
+	if (fcp->dih != (kiconv_t)-1)
+		kiconv_close(fcp->dih, &errno);
+	if (fcp->dch != (kiconv_t)-1)
+		kiconv_close(fcp->dch, &errno);
+	if (fcp->cdh != (kiconv_t)-1)
+		kiconv_close(fcp->cdh, &errno);
+	if (fcp->cih != (kiconv_t)-1)
+		kiconv_close(fcp->cih, &errno);
+	kiconv_freelocale(fcp->l, &errno);
+	free(fcp, M_MSDOSFSTMP);
+	pmp->pm_kiconvcookie = NULL;
+	pmp->pm_flags &= ~MSDOSFS_CONVERTFNAME;
+	return -1;
+}
+
+void
+msdosfs_finikiconv(struct msdosfsmount *pmp)
+{
+	struct msdosfs_kiconv *fcp = pmp->pm_kiconvcookie;
+	int errno;
+
+	if (fcp) {
+		kiconv_close(fcp->duh, &errno);
+		kiconv_close(fcp->udh, &errno);
+		kiconv_close(fcp->idh, &errno);
+		kiconv_close(fcp->dih, &errno);
+		kiconv_close(fcp->dch, &errno);
+		kiconv_close(fcp->cdh, &errno);
+		kiconv_close(fcp->cih, &errno);
+		kiconv_freelocale(fcp->l, &errno);
+		free(fcp, M_MSDOSFSTMP);
+	}
+}
+#else	/* !_KERNEL || _RUMPKERNEL || _RUMP_NATIVE_ABI */
+int
+msdosfs_initkiconv(struct msdosfsmount *pmp)
+{
+
+	pmp->pm_kiconvcookie = NULL;
+	pmp->pm_flags &= ~MSDOSFS_CONVERTFNAME;
+	return 0;
+}
+
+/*ARGSUSED*/
+void
+msdosfs_finikiconv(struct msdosfsmount *pmp)
+{
+
+	/* Nothing to do */
+}
+#endif
+
 /*
  * Convert a DOS filename to a unix filename. And, return the number of
  * characters in the resulting unix filename excluding the terminating
  * null.
  */
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+static int
+dos2unixfn_kiconv(u_char dn[11], u_char *un, int lower,
+    struct msdosfsmount *pmp)
+{
+	struct msdosfs_kiconv *fcp = pmp->pm_kiconvcookie;
+	u_char *p, *tmptop;
+	const char *src;
+	char *dst;
+	wchar_t *wtop;
+	const wchar_t *wbuf;
+	size_t szsrc, szdst, szresult;
+	size_t sz, wsz;
+	mbstate_t mbs;
+	int has_ext = 0;
+	int errno;
+	size_t i;
+	int j;
+
+	/*
+	 * If first char of the filename is SLOT_E5 (0x05),
+	 * then the real first char of the filename should
+	 * be 0xe5. But, they couldn't just have a 0xe5
+	 * mean 0xe5 because that is used to mean a freed
+	 * directory slot. Another dos quirk.
+	 */
+	p = un;
+	*p++ = (*dn == SLOT_E5) ? SLOT_DELETED : *dn;
+
+	/*
+	 * Copy the rest into the unix filename string,
+	 * ignoring trailing blanks.
+	 */
+	for (j = 7; (j >= 0) && (dn[j] == ' '); j--)
+		continue;
+
+	for (i = 1; i <= j; i++)
+		*p++ = dn[i];
+	dn += 8;
+
+	/*
+	 * Now, if there is an extension then put in a period
+	 * and copy in the extension.
+	 */
+	if (*dn != ' ') {
+		has_ext = 1;
+		*p++ = '.';
+		for (i = 0; i < 3 && *dn != ' '; i++)
+			*p++ = *dn++;
+	}
+
+	if (!lower || (!(lower & LCASE_BASE) && !has_ext)) {
+		/* fast path */
+
+		/* initialize handle */
+		(void)kiconv_conv(fcp->cih, NULL, NULL, NULL, NULL, &errno);
+
+		/*
+		 * convert from codepage to iocharset
+		 */
+		src = un;
+		szsrc = p - un;
+		dst = tmptop = PNBUF_GET();
+		KASSERT(tmptop != NULL);
+		szdst = MAXNAMLEN + 1;
+		szresult = kiconv_conv(fcp->cih, &src, &szsrc, &dst, &szdst,
+		    &errno);
+		if (szresult == (size_t)-1) {
+			PNBUF_PUT(tmptop);
+			return -1;
+		}
+		sz = MAXNAMLEN + 1 - szdst;
+
+		memcpy(un, tmptop, sz);
+		un[sz] = '\0';
+		PNBUF_PUT(tmptop);
+
+		return sz;
+	}
+	/* slow path */
+
+	/* initialize handle */
+	(void)kiconv_conv(fcp->cdh, NULL, NULL, NULL, NULL, &errno);
+	(void)kiconv_conv(fcp->dih, NULL, NULL, NULL, NULL, &errno);
+
+	/*
+	 * convert from codepage to default encoding.
+	 */
+	src = un;
+	szsrc = p - un;
+	dst = tmptop = PNBUF_GET();
+	KASSERT(tmptop != NULL);
+	szdst = PATH_MAX;
+	szresult = kiconv_conv(fcp->cdh, &src, &szsrc, &dst, &szdst, &errno);
+	if (szresult == (size_t)-1)
+		goto free_tmp;
+	sz = PATH_MAX - szdst;
+	tmptop[sz] = '\0';
+
+	/*
+	 * convert default encoding to wchar_t
+	 */
+	src = tmptop;
+	wtop = WPNBUF_GET();
+	KASSERT(wtop != NULL);
+	memset(&mbs, 0, sizeof(mbs));
+	szresult = kiconv_mbsrtowcs_l(wtop, &src, PATH_MAX, &mbs, fcp->l,
+	    &errno);
+	if (szresult == (size_t)-1)
+		goto free_wbuf;
+	wsz = szresult;
+	wtop[wsz] = L'\0';
+
+	/*
+	 * tolower
+	 */
+	if (!has_ext) {
+		j = -1;
+		for (i = 0; i < wsz; i++) {
+			if (wtop[i] == L'.')
+				j = i + 1;
+		}
+		if (j < 0)
+			goto no_ext;
+
+		if (lower & LCASE_BASE) {
+			for (i = 0; i < j - 1; i++) {
+				if (kiconv_iswupper_l(wtop[i], fcp->l)) {
+					wtop[i] = kiconv_towlower_l(wtop[i],
+					    fcp->l);
+				}
+			}
+		}
+		if (lower & LCASE_EXT) {
+			for (i = j; i < wsz; i++) {
+				if (kiconv_iswupper_l(wtop[i], fcp->l)) {
+					wtop[i] = kiconv_towlower_l(wtop[i],
+					    fcp->l);
+				}
+			}
+		}
+	} else {
+no_ext:
+		if (lower & LCASE_BASE) {
+			for (i = 0; i < wsz; i++) {
+				if (kiconv_iswupper_l(wtop[i], fcp->l)) {
+					wtop[i] = kiconv_towlower_l(wtop[i],
+					    fcp->l);
+				}
+			}
+		}
+	}
+
+	/*
+	 * convert from wchar_t to default encoding
+	 */
+	wbuf = wtop;
+	memset(&mbs, 0, sizeof(mbs));
+	szresult = kiconv_wcsrtombs_l(tmptop, &wbuf, PATH_MAX, &mbs, fcp->l,
+	    &errno);
+	if (szresult == (size_t)-1)
+		goto free_wbuf;
+	WPNBUF_PUT(wtop);
+
+	/*
+	 * convert from default encoding to iocharset
+	 */
+	src = tmptop;
+	szsrc = szresult;
+	dst = un;
+	szdst = MAXNAMLEN + 1;
+	szresult = kiconv_conv(fcp->dih, &src, &szsrc, &dst, &szdst, &errno);
+	if (szresult == (size_t)-1)
+		goto free_tmp;
+	PNBUF_PUT(tmptop);
+	sz = MAXNAMLEN + 1 - szdst;
+	un[sz] = '\0';
+
+	return sz;
+
+free_wbuf:
+	WPNBUF_PUT(wtop);
+free_tmp:
+	PNBUF_PUT(tmptop);
+	return -1;
+}
+
+static __inline bool
+is_skip_char(wchar_t wc)
+{
+
+	return (wc == L' ') || (wc == L'.');
+}
+
+static __inline bool
+is_bad_char(wchar_t wc)
+{
+
+	/* XXX: 0x00-0x1f isn't PCS. use iswprint()? */
+	return (wc < 0x20)
+	    || (wc == L'"') || (wc == L'*') || (wc == L'/') || (wc == L':')
+	    || (wc == L'<') || (wc == L'=') || (wc == L'>') || (wc == L'?')
+	    || (wc == L'|') || (wc == L'\\');
+}
+
+static __inline wchar_t
+is_replace_char(wchar_t wc)
+{
+
+	return (wc == L'+') || (wc == L',') || (wc == L';')
+	    || (wc == L'[') || (wc == L']');
+}
+
+static size_t
+to_codepage_char(u_char *top, size_t len, wchar_t wc, int *conv, mbstate_t *mbs,
+    struct msdosfs_kiconv *fcp, int *errnop)
+{
+	u_char buf[MB_LEN_MAX];
+	wchar_t wtop[2];
+	const wchar_t *wbuf;
+	const char *src;
+	char *dst;
+	size_t szsrc, szdst, szresult;
+
+	if (is_skip_char(wc)) {
+		*conv = 3;
+		return 0;
+	}
+
+	if (is_replace_char(wc))
+		goto replace;
+
+	if (kiconv_iswlower_l(wc, fcp->l)) {
+		wc = kiconv_towupper_l(wc, fcp->l);
+		if (*conv != 3)
+			*conv = 2;
+	}
+
+	wtop[0] = wc;
+	wtop[1] = L'\0';
+	wbuf = wtop;
+	szresult = kiconv_wcsrtombs_l(buf, &wbuf, sizeof(buf), mbs, fcp->l,
+	    errnop);
+	if (szresult == (size_t)-1) {
+		memset(mbs, 0, sizeof(*mbs));
+		goto replace;
+	}
+
+	src = buf;
+	szsrc = szresult;
+	dst = top;
+	szdst = len;
+	szresult = kiconv_conv(fcp->dch, &src, &szsrc, &dst, &szdst, errnop);
+	if (szresult == (size_t)-1) {
+		int errno2;
+		(void)kiconv_conv(fcp->dch, NULL, NULL, NULL, NULL, &errno2);
+		goto replace;
+	}
+	return len - szdst;
+
+replace:
+	*conv = 3;
+	top[0] = '_';
+	return 1;
+}
+
+/*
+ * Returns
+ *	0 if name couldn't be converted
+ *	1 if the converted name is the same as the original
+ *	  (no long filename entry necessary for Win95)
+ *	2 if conversion was successful
+ *	3 if conversion was successful and generation number was inserted
+ */
+static int
+unix2dosfn_kiconv(struct msdosfs_winfn *fn, u_char dn[12], u_int gen,
+    struct msdosfsmount *pmp)
+{
+	struct msdosfs_kiconv *fcp = pmp->pm_kiconvcookie;
+	wchar_t *wcs = fn->wcs;
+	size_t wcslen = fn->wcslen;
+	u_char *base = &dn[0], *ext = &dn[8];
+	u_char gentext[6], *wcp;
+	u_char buf[12];
+	int coff[8], ncoff;
+	size_t szresult;
+	mbstate_t mbs;
+	wchar_t wc;
+	int errno;
+	const wchar_t *cp, *ep, *dp, *dp1;
+	int i, j, l;
+	int baselen, extlen;
+	int conv = 1;
+
+	/*
+	 * The filenames "." and ".." are handled specially, since they
+	 * don't follow dos filename rules.
+	 */
+	if (wcslen == 1 && wcs[0] == L'.') {
+		dn[0] = '.';
+		return gen <= 1;
+	}
+	if (wcslen == 2 && wcs[0] == L'.' && wcs[1] == L'.') {
+		dn[0] = '.';
+		dn[1] = '.';
+		return gen <= 1;
+	}
+
+	/*
+	 * Filenames with only blanks and dots are not allowed!
+	 * Also filenames with bad character are not allowed.
+	 */
+	for (cp = wcs, i = wcslen; --i >= 0; cp++) {
+		if (!is_skip_char(*cp)) {
+			if (is_bad_char(*cp))
+				return 0;
+			break;
+		}
+	}
+	if (i < 0)
+		return 0;
+
+	/*
+	 * Now find the extension.
+	 * Note: dot as first char doesn't start extension
+	 *	 and trailing dots and blanks are ignored
+	 */
+	dp = dp1 = NULL;
+	ep = wcs + wcslen;
+	for (cp = wcs + 1, i = wcslen - 1; --i >= 0;) {
+		wc = *cp++;
+		switch (wc) {
+		case L'.':
+			if (dp1 == NULL)
+				dp1 = cp;
+			break;
+		case L' ':
+			break;
+		default:
+			if (dp1) {
+				ep = dp1 - 1;
+				dp = dp1;
+			}
+			dp1 = NULL;
+			break;
+		}
+	}
+	if (dp) {
+		/* In "...test" case, extention as basename and no extention. */
+		for (cp = wcs; cp < dp; cp++) {
+			if (!is_skip_char(*cp))
+				break;
+		}
+		if (cp == dp) {
+			dp = NULL;
+			ep = wcs + wcslen;
+		}
+	}
+
+	/* initialize handle */
+	(void)kiconv_conv(fcp->dch, NULL, NULL, NULL, NULL, &errno);
+
+	/*
+	 * Now convert it
+	 */
+	/* base filename */
+	ncoff = 0;
+	baselen = 0;
+	memset(&mbs, 0, sizeof(mbs));
+	for (cp = wcs; cp < ep; cp++) {
+		szresult = to_codepage_char(buf, sizeof(buf), *cp, &conv, &mbs,
+		    fcp, &errno);
+		if (szresult == 0)
+			continue;
+
+		if (baselen >= 2)
+			coff[ncoff++] = baselen;
+		if (baselen + szresult > 8) {
+			conv = 3;
+			break;
+		}
+		memcpy(base + baselen, buf, szresult);
+		baselen += szresult;
+	}
+	if (baselen == 0)
+		return 0;
+
+	/* ext */
+	extlen = 0;
+	memset(&mbs, 0, sizeof(mbs));
+	if (dp) {
+		if (dp1)
+			l = dp1 - dp;
+		else
+			l = wcslen - (dp - wcs);
+		ep = dp + l;
+		for (cp = dp; cp < ep; cp++) {
+			szresult = to_codepage_char(buf, sizeof(buf), *cp,
+			    &conv, &mbs, fcp, &errno);
+			if (szresult == 0)
+				continue;
+
+			if (extlen + szresult > 3) {
+				conv = 3;
+				break;
+			}
+			memcpy(ext + extlen, buf, szresult);
+			extlen += szresult;
+		}
+	}
+
+	/*
+	 * The first character cannot be E5,
+	 * because that means a deleted entry
+	 */
+	if (base[0] == SLOT_DELETED)
+		base[0] = SLOT_E5;
+
+	/*
+	 * If there wasn't any char dropped,
+	 * there is no place for generation numbers
+	 */
+	if (conv != 3) {
+		if (gen > 1)
+			return 0;
+		return conv;
+	}
+
+	/*
+	 * Now insert the generation number into the filename part
+	 */
+	for (wcp = gentext + sizeof(gentext); wcp > gentext && gen; gen /= 10)
+		*--wcp = gen % 10 + '0';
+	if (gen)
+		return 0;
+	for (i = 8; dn[--i] == ' ';)
+		continue;
+	i++;
+	l = gentext + sizeof(gentext) - wcp + 1;
+	if (l > 8 - i) {
+		i = 8 - l;
+		if (ncoff > 0) {
+			for (j = ncoff; --j >= 0;) {
+				if (l <= 8 - coff[j]) {
+					i = coff[j];
+					break;
+				}
+			}
+			if (j < 0)
+				return 0;
+		}
+	}
+	dn[i++] = '~';
+	while (wcp < gentext + sizeof(gentext))
+		dn[i++] = *wcp++;
+	return 3;
+}
+
+static int
+unix2winfn_kiconv(struct msdosfs_winfn *fn, struct winentry *wep, int cnt,
+    int chksum, struct msdosfsmount *pmp)
+{
+	const u_char *wn = fn->wn;
+	int wnlen = fn->wnlen;
+	int sz;
+	uint8_t *wcp;
+	int i;
+
+	sz = (cnt - 1) * WIN_CHARS;
+	wn += sz * 2;
+	wnlen -= sz;
+
+	/*
+	 * Initialize winentry to some useful default
+	 */
+	memset(wep, 0xff, sizeof(*wep));
+	wep->weCnt = cnt;
+	wep->weAttributes = ATTR_WIN95;
+	wep->weReserved1 = 0;
+	wep->weChksum = chksum;
+	wep->weReserved2 = 0;
+
+	/*
+	 * Now convert the filename parts
+	 */
+	for (wcp = wep->wePart1, i = 0; i < sizeof(wep->wePart1) / 2; i++) {
+		if (--wnlen < 0)
+			goto done;
+		*wcp++ = *wn++;
+		*wcp++ = *wn++;
+	}
+	for (wcp = wep->wePart2, i = 0; i < sizeof(wep->wePart2) / 2; i++) {
+		if (--wnlen < 0)
+			goto done;
+		*wcp++ = *wn++;
+		*wcp++ = *wn++;
+	}
+	for (wcp = wep->wePart3, i = 0; i < sizeof(wep->wePart3) / 2; i++) {
+		if (--wnlen < 0)
+			goto done;
+		*wcp++ = *wn++;
+		*wcp++ = *wn++;
+	}
+	if (wnlen == 0)
+		wep->weCnt |= WIN_LAST;
+	return wnlen;
+
+done:
+	*wcp++ = '\0';
+	*wcp++ = '\0';
+	wep->weCnt |= WIN_LAST;
+	return 0;
+}
+
+static int
+win2unixfn_kiconv(struct winentry *wep, struct dirent *dp, int chksum,
+    struct msdosfsmount *pmp)
+{
+	struct msdosfs_kiconv *fcp = pmp->pm_kiconvcookie;
+	uint8_t buf[sizeof(wep->wePart1) + sizeof(wep->wePart2) + sizeof(wep->wePart3)];
+	char *p, *tmptop, *untop;
+	const char *src;
+	char *dst;
+	wchar_t *wtop;
+	const wchar_t *wbuf;
+	size_t szsrc, szdst, szresult;
+	size_t sz, wsz;
+	mbstate_t mbs;
+	int errno;
+	size_t i;
+
+	/*
+	 * First compare checksums
+	 */
+	if (wep->weCnt & WIN_LAST) {
+		chksum = wep->weChksum;
+		dp->d_namlen = 0;
+	} else if (chksum != wep->weChksum)
+		chksum = -1;
+	if (chksum == -1)
+		goto error;
+
+	p = buf; sz = sizeof(wep->wePart1); memcpy(p, wep->wePart1, sz);
+	p += sz; sz = sizeof(wep->wePart2); memcpy(p, wep->wePart2, sz);
+	p += sz; sz = sizeof(wep->wePart3); memcpy(p, wep->wePart3, sz);
+
+	/* initialize handle */
+	(void)kiconv_conv(fcp->udh, NULL, NULL, NULL, NULL, &errno);
+	(void)kiconv_conv(fcp->dih, NULL, NULL, NULL, NULL, &errno);
+
+	/*
+	 * convert from UTF-16LE to default encoding.
+	 */
+	src = buf;
+	szsrc = sizeof(buf);
+	dst = tmptop = PNBUF_GET();
+	KASSERT(tmptop != NULL);
+	szdst = PATH_MAX;
+	szresult = kiconv_conv(fcp->udh, &src, &szsrc, &dst, &szdst, &errno);
+	if (szresult == (size_t)-1)
+		goto free_tmp;
+	sz = PATH_MAX - szdst;
+	tmptop[sz] = '\0';
+
+	/*
+	 * convert default encoding to wchar_t
+	 */
+	src = tmptop;
+	wtop = WPNBUF_GET();
+	KASSERT(wtop != NULL);
+	memset(&mbs, 0, sizeof(mbs));
+	szresult = kiconv_mbsrtowcs_l(wtop, &src, PATH_MAX, &mbs, fcp->l,
+	    &errno);
+	if (szresult == (size_t)-1)
+		goto free_wbuf;
+	wsz = szresult;
+	wtop[wsz] = L'\0';
+
+	/*
+	 * Convert the name parts
+	 */
+	for (i = 0; i < wsz; i++) {
+		if (wtop[i] == L'/') {
+			goto free_wbuf;
+		}
+	}
+
+	/*
+	 * convert from wchar_t to default encoding
+	 */
+	wbuf = wtop;
+	memset(&mbs, 0, sizeof(mbs));
+	szresult = kiconv_wcsrtombs_l(tmptop, &wbuf, sizeof(dp->d_name), &mbs,
+	    fcp->l, &errno);
+	if (szresult == (size_t)-1)
+		goto free_wbuf;
+	WPNBUF_PUT(wtop);
+
+	/*
+	 * convert from default encoding to iocharset
+	 */
+	src = tmptop;
+	szsrc = szresult;
+	dst = untop = PNBUF_GET();
+	KASSERT(untop != NULL);
+	szdst = sizeof(dp->d_name) - dp->d_namlen;
+	szresult = kiconv_conv(fcp->dih, &src, &szsrc, &dst, &szdst, &errno);
+	if (szresult == (size_t)-1) {
+		PNBUF_PUT(untop);
+		goto free_tmp;
+	}
+	PNBUF_PUT(tmptop);
+	sz = sizeof(dp->d_name) - dp->d_namlen - szdst;
+	memmove(dp->d_name + sz, dp->d_name, dp->d_namlen);
+	memcpy(dp->d_name, untop, sz);
+	PNBUF_PUT(untop);
+	dp->d_namlen += sz;
+	dp->d_name[dp->d_namlen] = '\0';
+
+	return chksum;
+
+free_wbuf:
+	WPNBUF_PUT(wtop);
+free_tmp:
+	PNBUF_PUT(tmptop);
+error:
+	return -1;
+}
+
+static int
+winChkName_kiconv(struct msdosfs_winfn *fn, struct winentry *wep, int chksum,
+    struct msdosfsmount *pmp)
+{
+	struct msdosfs_kiconv *fcp = pmp->pm_kiconvcookie;
+	const u_char *wn = fn->lcwn;
+	int wnlen = fn->wnlen;
+	uint8_t buf[sizeof(wep->wePart1) + sizeof(wep->wePart2) + sizeof(wep->wePart3)];
+	u_char *p, *tmptop;
+	const char *src;
+	char *dst;
+	wchar_t *wtop;
+	const wchar_t *wbuf;
+	size_t szsrc, szdst, szresult;
+	size_t sz, wsz;
+	mbstate_t mbs;
+	int errno;
+	size_t i;
+
+	/*
+	 * Offset of this entry
+	 */
+	i = ((wep->weCnt & WIN_CNT) - 1) * WIN_CHARS;
+	wn += i * 2;
+	wnlen -= i;
+	if (wnlen < 0)
+		goto error;
+
+	/*
+	 * Ignore redundant winentries (those with only \0\0 on start in them).
+	 * An appearance of such entry is a bug; unknown if in NetBSD msdosfs
+	 * or MS Windows.
+	 */
+	if (wnlen == 0) {
+		if (wep->wePart1[0] == '\0' && wep->wePart1[1] == '\0')
+			goto done;
+		goto error;
+	}
+
+	if ((wep->weCnt & WIN_LAST) && wnlen > WIN_CHARS)
+		goto error;
+
+	p = buf; sz = sizeof(wep->wePart1); memcpy(p, wep->wePart1, sz);
+	p += sz; sz = sizeof(wep->wePart2); memcpy(p, wep->wePart2, sz);
+	p += sz; sz = sizeof(wep->wePart3); memcpy(p, wep->wePart3, sz);
+
+	/* initialize handle */
+	(void)kiconv_conv(fcp->udh, NULL, NULL, NULL, NULL, &errno);
+	(void)kiconv_conv(fcp->duh, NULL, NULL, NULL, NULL, &errno);
+
+	/*
+	 * convert from UTF-16LE to default encoding.
+	 */
+	src = buf;
+	szsrc = sizeof(buf);
+	dst = tmptop = PNBUF_GET();
+	KASSERT(tmptop != NULL);
+	szdst = PATH_MAX;
+	szresult = kiconv_conv(fcp->udh, &src, &szsrc, &dst, &szdst, &errno);
+	if (szresult == (size_t)-1)
+		goto free_tmp;
+	sz = PATH_MAX - szdst;
+	tmptop[sz] = '\0';
+
+	/*
+	 * convert default encoding to wchar_t
+	 */
+	src = tmptop;
+	wtop = WPNBUF_GET();
+	KASSERT(wtop != NULL);
+	memset(&mbs, 0, sizeof(mbs));
+	szresult = kiconv_mbsrtowcs_l(wtop, &src, PATH_MAX, &mbs, fcp->l,
+	    &errno);
+	if (szresult == (size_t)-1)
+		goto free_wbuf;
+	wsz = szresult;
+	wtop[wsz] = L'\0';
+
+	/*
+	 * tolower
+	 */
+	for (i = 0; i < wsz; i++) {
+		if (kiconv_iswupper_l(wtop[i], fcp->l)) {
+			wtop[i] = kiconv_towlower_l(wtop[i], fcp->l);
+		}
+	}
+
+	/*
+	 * convert from wchar_t to default encoding (lower-case)
+	 */
+	wbuf = wtop;
+	memset(&mbs, 0, sizeof(mbs));
+	szresult = kiconv_wcsrtombs_l(tmptop, &wbuf, PATH_MAX, &mbs, fcp->l,
+	    &errno);
+	WPNBUF_PUT(wtop);
+	if (szresult == (size_t)-1)
+		goto free_tmp;
+
+	/*
+	 * convert from default encoding to UTF-16LE (lower-case)
+	 */
+	src = tmptop;
+	szsrc = szresult;
+	dst = buf;
+	szdst = sizeof(buf);
+	szresult = kiconv_conv(fcp->duh, &src, &szsrc, &dst, &szdst, &errno);
+	PNBUF_PUT(tmptop);
+	if (szresult == (size_t)-1)
+		goto error;
+	KASSERT((sizeof(buf) - szdst) == sizeof(buf));
+
+	/*
+	 * Compare the name parts
+	 */
+	sz = min(wnlen, sizeof(buf) / 2);
+	if (memcmp(buf, wn, sz * 2))
+		goto error;
+	wnlen -= sz;
+	wn += sz * 2;
+	if (wnlen == 0 && sz != (sizeof(buf) / 2))
+		if (wn[0] != '\0' || wn[1] != '\0')
+			goto error;
+
+done:
+	return chksum;
+
+free_wbuf:
+	WPNBUF_PUT(wtop);
+free_tmp:
+	PNBUF_PUT(tmptop);
+error:
+	return -1;
+}
+
+static int
+newwinfn_kiconv(struct componentname *cnp, struct msdosfs_winfn **fnp,
+    struct msdosfsmount *pmp)
+{
+	struct msdosfs_kiconv *fcp = pmp->pm_kiconvcookie;
+	struct msdosfs_winfn *fn;
+	char *tmptop, *wintop, *winlctop;
+	const char *src;
+	char *dst;
+	wchar_t *wtop, *wtmp;
+	const wchar_t *wbuf;
+	size_t szsrc, szdst, szresult;
+	size_t sz, lcsz, wsz, orig_wsz;
+	mbstate_t mbs;
+	int errno;
+	int error;
+	size_t i;
+
+	/* initialize handle */
+	(void)kiconv_conv(fcp->idh, NULL, NULL, NULL, NULL, &errno);
+	(void)kiconv_conv(fcp->duh, NULL, NULL, NULL, NULL, &errno);
+
+	/*
+	 * convert from iocharset to default encoding.
+	 */
+	src = (const u_char *)cnp->cn_nameptr;
+	szsrc = cnp->cn_namelen;
+	dst = tmptop = PNBUF_GET();
+	KASSERT(tmptop != NULL);
+	szdst = PATH_MAX;
+	szresult = kiconv_conv(fcp->idh, &src, &szsrc, &dst, &szdst, &errno);
+	if (szresult == (size_t)-1) {
+		error = errno;
+		goto free_tmp;
+	}
+	sz = PATH_MAX - szdst;
+	tmptop[sz] = '\0';
+
+	/*
+	 * convert default encoding to wchar_t
+	 */
+	src = tmptop;
+	wtop = WPNBUF_GET();
+	KASSERT(wtop != NULL);
+	memset(&mbs, 0, sizeof(mbs));
+	szresult = kiconv_mbsrtowcs_l(wtop, &src, PATH_MAX, &mbs, fcp->l,
+	    &errno);
+	if (szresult == (size_t)-1) {
+		error = errno;
+		goto free_wbuf;
+	}
+	wsz = szresult;
+	wtop[wsz] =L'\0';
+
+	/*
+	 * Drop trailing blanks and dots for namelen
+	 */
+	wtmp = WPNBUF_GET();
+	KASSERT(wtmp != NULL);
+	memcpy(wtmp, wtop, PATH_MAX * sizeof(wchar_t));
+	orig_wsz = wsz;
+	for (wbuf = wtmp + wsz; wsz > 0; wsz--) {
+		if (*--wbuf != L' ' && *wbuf != L'.') {
+			break;
+		}
+	}
+	wtmp[wsz] = L'\0';
+
+	/*
+	 * convert from wchar_t to default encoding for namelen.
+	 */
+	wbuf = wtmp;
+	memset(&mbs, 0, sizeof(mbs));
+	szresult = kiconv_wcsrtombs_l(tmptop, &wbuf, PATH_MAX, &mbs, fcp->l,
+	    &errno);
+	if (szresult == (size_t)-1) {
+		error = errno;
+		goto free_wtmp;
+	}
+
+	/*
+	 * convert from default encoding to UTF-16LE for namelen
+	 */
+	src = tmptop;
+	szsrc = szresult;
+	dst = wintop = PNBUF_GET();
+	KASSERT(wintop != NULL);
+	szdst = PATH_MAX;
+	szresult = kiconv_conv(fcp->duh, &src, &szsrc, &dst, &szdst, &errno);
+	if (szresult == (size_t)-1) {
+		error = errno;
+		goto free_wintop;
+	}
+	sz = PATH_MAX - szdst;
+	KASSERT((sz % 2) == 0);
+	sz /= 2;
+
+	if (sz > WIN_MAXLEN) {
+		error = ENAMETOOLONG;
+		goto free_wintop;
+	}
+	wsz = orig_wsz;
+
+	/*
+	 * convert from wchar_t to default encoding
+	 */
+	wbuf = wtop;
+	memset(&mbs, 0, sizeof(mbs));
+	szresult = kiconv_wcsrtombs_l(tmptop, &wbuf, PATH_MAX, &mbs, fcp->l,
+	    &errno);
+	if (szresult == (size_t)-1) {
+		error = errno;
+		goto free_wintop;
+	}
+
+	/*
+	 * convert from default encoding to UTF-16LE
+	 */
+	/* initialize handle */
+	(void)kiconv_conv(fcp->duh, NULL, NULL, NULL, NULL, &errno);
+	src = tmptop;
+	szsrc = szresult;
+	dst = wintop;
+	szdst = PATH_MAX;
+	szresult = kiconv_conv(fcp->duh, &src, &szsrc, &dst, &szdst, &errno);
+	if (szresult == (size_t)-1) {
+		error = errno;
+		goto free_wintop;
+	}
+	sz = PATH_MAX - szdst;
+	KASSERT((sz % 2) == 0);
+	wintop[sz] = wintop[sz + 1] = '\0';
+	sz /= 2;
+
+	/*
+	 * tolower
+	 */
+	memcpy(wtmp, wtop, PATH_MAX * sizeof(wchar_t));
+	for (i = 0; i < wsz; i++) {
+		if (kiconv_iswupper_l(wtmp[i], fcp->l)) {
+			wtmp[i] = kiconv_towlower_l(wtmp[i], fcp->l);
+		}
+	}
+
+	/*
+	 * convert from wchar_t to default encoding (lower-case)
+	 */
+	wbuf = wtmp;
+	memset(&mbs, 0, sizeof(mbs));
+	szresult = kiconv_wcsrtombs_l(tmptop, &wbuf, PATH_MAX, &mbs, fcp->l,
+	    &errno);
+	if (szresult == (size_t)-1) {
+		error = errno;
+		goto free_wintop;
+	}
+
+	/*
+	 * convert from default encoding to UTF-16LE (lower-case)
+	 */
+	/* initialize handle */
+	(void)kiconv_conv(fcp->duh, NULL, NULL, NULL, NULL, &errno);
+	src = tmptop;
+	szsrc = szresult;
+	dst = winlctop = PNBUF_GET();
+	KASSERT(winlctop != NULL);
+	szdst = PATH_MAX;
+	szresult = kiconv_conv(fcp->duh, &src, &szsrc, &dst, &szdst, &errno);
+	if (szresult == (size_t)-1) {
+		error = errno;
+		goto free_winlctop;
+	}
+	lcsz = PATH_MAX - szdst;
+	KASSERT((lcsz % 2) == 0);
+	KASSERT((lcsz / 2) == sz);
+	winlctop[lcsz] = winlctop[lcsz + 1] = '\0';
+
+	WPNBUF_PUT(wtmp);
+	PNBUF_PUT(tmptop);
+
+	fn = malloc(sizeof(*fn), M_MSDOSFSTMP, M_WAITOK);
+	fn->un = (const u_char *)cnp->cn_nameptr;
+	fn->unlen = cnp->cn_namelen;
+	fn->wn = wintop;
+	fn->lcwn = winlctop;
+	fn->wnlen = sz;
+	fn->wcs = wtop;
+	fn->wcslen = wsz;
+
+	*fnp = fn;
+	return 0;
+
+free_winlctop:
+	PNBUF_PUT(winlctop);
+free_wintop:
+	PNBUF_PUT(wintop);
+free_wtmp:
+	WPNBUF_PUT(wtmp);
+free_wbuf:
+	WPNBUF_PUT(wtop);
+free_tmp:
+	PNBUF_PUT(tmptop);
+	return error;
+}
+#endif
+
 int
-dos2unixfn(u_char dn[11], u_char *un, int lower)
+dos2unixfn(u_char dn[11], u_char *un, int lower, struct msdosfsmount *pmp)
 {
 	int i, j;
-	int thislong = 1;
+	int thislong;
 	u_char c;
+
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+	if (pmp->pm_flags & MSDOSFS_CONVERTFNAME) {
+		thislong = dos2unixfn_kiconv(dn, un, lower, pmp);
+		if (thislong >= 0)
+			return thislong;
+		/*FALLTHROUGH*/
+		printf("%s: warning: filename convertion failure.\n", __func__);
+	}
+#endif
+
+	thislong = 1;
 
 	/*
 	 * If first char of the filename is SLOT_E5 (0x05), then the real
@@ -367,10 +1481,10 @@ dos2unixfn(u_char dn[11], u_char *un, int lower)
 	 * directory slot. Another dos quirk.
 	 */
 	if (*dn == SLOT_E5)
-		c = dos2unix[0xe5];
+		c = dos2unix[SLOT_DELETED];
 	else
 		c = dos2unix[*dn];
-	*un++ = lower ? u2l[c] : c;
+	*un++ = (lower & LCASE_BASE) ? u2l[c] : c;
 
 	/*
 	 * Copy the rest into the unix filename string, ignoring
@@ -382,7 +1496,7 @@ dos2unixfn(u_char dn[11], u_char *un, int lower)
 
 	for (i = 1; i <= j; i++) {
 		c = dos2unix[dn[i]];
-		*un++ = lower ? u2l[c] : c;
+		*un++ = (lower & LCASE_BASE) ? u2l[c] : c;
 		thislong++;
 	}
 	dn += 8;
@@ -396,7 +1510,7 @@ dos2unixfn(u_char dn[11], u_char *un, int lower)
 		thislong++;
 		for (i = 0; i < 3 && *dn != ' '; i++) {
 			c = dos2unix[*dn++];
-			*un++ = lower ? u2l[c] : c;
+			*un++ = (lower & LCASE_EXT) ? u2l[c] : c;
 			thislong++;
 		}
 	}
@@ -417,8 +1531,11 @@ dos2unixfn(u_char dn[11], u_char *un, int lower)
  *	3 if conversion was successful and generation number was inserted
  */
 int
-unix2dosfn(const u_char *un, u_char dn[12], int unlen, u_int gen)
+unix2dosfn(struct msdosfs_winfn *fn, u_char dn[12], u_int gen,
+    struct msdosfsmount *pmp)
 {
+	const u_char *un = fn->un;
+	int unlen = fn->unlen;
 	int i, j, l;
 	int conv = 1;
 	const u_char *cp, *dp, *dp1;
@@ -432,6 +1549,11 @@ unix2dosfn(const u_char *un, u_char dn[12], int unlen, u_int gen)
 	for (i = 0; i < 11; i++)
 		dn[i] = ' ';
 	dn[11] = 0;
+
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+	if (pmp->pm_flags & MSDOSFS_CONVERTFNAME)
+		return unix2dosfn_kiconv(fn, dn, gen, pmp);
+#endif
 
 	/*
 	 * The filenames "." and ".." are handled specially, since they
@@ -534,7 +1656,7 @@ unix2dosfn(const u_char *un, u_char dn[12], int unlen, u_int gen)
 	 * The first character cannot be E5,
 	 * because that means a deleted entry
 	 */
-	if (dn[0] == 0xe5)
+	if (dn[0] == SLOT_DELETED)
 		dn[0] = SLOT_E5;
 
 	/*
@@ -570,11 +1692,22 @@ unix2dosfn(const u_char *un, u_char dn[12], int unlen, u_int gen)
  *	 i.e. doesn't consist solely of blanks and dots
  */
 int
-unix2winfn(const u_char *un, int unlen, struct winentry *wep, int cnt, int chksum)
+unix2winfn(struct msdosfs_winfn *fn, struct winentry *wep, int cnt, int chksum,
+    struct msdosfsmount *pmp)
 {
+	const u_char *un;
+	int unlen;
 	const u_int8_t *cp;
 	u_int8_t *wcp;
 	int i;
+
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+	if (pmp->pm_flags & MSDOSFS_CONVERTFNAME)
+		return unix2winfn_kiconv(fn, wep, cnt, chksum, pmp);
+#endif
+
+	un = fn->un;
+	unlen = fn->unlen;
 
 	/*
 	 * Drop trailing blanks and dots
@@ -631,8 +1764,11 @@ done:
  * Returns the checksum or -1 if no match
  */
 int
-winChkName(const u_char *un, int unlen, struct winentry *wep, int chksum)
+winChkName(struct msdosfs_winfn *fn, struct winentry *wep, int chksum,
+    struct msdosfsmount *pmp)
 {
+	const u_char *un;
+	int unlen;
 	u_int8_t *cp;
 	int i;
 
@@ -646,9 +1782,16 @@ winChkName(const u_char *un, int unlen, struct winentry *wep, int chksum)
 	if (chksum == -1)
 		return -1;
 
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+	if (pmp->pm_flags & MSDOSFS_CONVERTFNAME)
+		return winChkName_kiconv(fn, wep, chksum, pmp);
+#endif
+
 	/*
 	 * Offset of this entry
 	 */
+	un = fn->un;
+	unlen = fn->unlen;
 	i = ((wep->weCnt&WIN_CNT) - 1) * WIN_CHARS;
 	un += i;
 	if ((unlen -= i) < 0)
@@ -707,7 +1850,8 @@ winChkName(const u_char *un, int unlen, struct winentry *wep, int chksum)
  * Returns the checksum or -1 if impossible
  */
 int
-win2unixfn(struct winentry *wep, struct dirent *dp, int chksum)
+win2unixfn(struct winentry *wep, struct dirent *dp, int chksum,
+    struct msdosfsmount *pmp)
 {
 	u_int8_t *cp;
 	u_int8_t *np, *ep = (u_int8_t *)dp->d_name + WIN_MAXLEN;
@@ -716,6 +1860,11 @@ win2unixfn(struct winentry *wep, struct dirent *dp, int chksum)
 	if ((wep->weCnt&WIN_CNT) > howmany(WIN_MAXLEN, WIN_CHARS)
 	    || !(wep->weCnt&WIN_CNT))
 		return -1;
+
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+	if (pmp->pm_flags & MSDOSFS_CONVERTFNAME)
+		return win2unixfn_kiconv(wep, dp, chksum, pmp);
+#endif
 
 	/*
 	 * First compare checksums
@@ -832,12 +1981,64 @@ winChksum(u_int8_t *name)
  * Determine the number of slots necessary for Win95 names
  */
 int
-winSlotCnt(const u_char *un, int unlen)
+winSlotCnt(struct msdosfs_winfn *fn, struct msdosfsmount *pmp)
 {
+
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+	if (pmp->pm_flags & MSDOSFS_CONVERTFNAME)
+		return howmany(fn->wnlen, WIN_CHARS);
+#endif
+	return howmany(fn->unlen, WIN_CHARS);
+}
+
+int
+newwinfn(struct componentname *cnp, struct msdosfs_winfn **fnp,
+    struct msdosfsmount *pmp)
+{
+	struct msdosfs_winfn *fn;
+	const u_char *un;
+	int unlen;
+
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+	if (pmp->pm_flags & MSDOSFS_CONVERTFNAME)
+		return newwinfn_kiconv(cnp, fnp, pmp);
+#endif
+
+	un = (const u_char *)cnp->cn_nameptr;
+	unlen = cnp->cn_namelen;
 	for (un += unlen; unlen > 0; unlen--)
 		if (*--un != ' ' && *un != '.')
 			break;
 	if (unlen > WIN_MAXLEN)
-		return 0;
-	return howmany(unlen, WIN_CHARS);
+		return ENAMETOOLONG;
+
+	fn = malloc(sizeof(*fn), M_MSDOSFSTMP, M_WAITOK);
+	fn->un = (const u_char *)cnp->cn_nameptr;
+	fn->unlen = cnp->cn_namelen;
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+	fn->wn = fn->lcwn = NULL;
+	fn->wnlen = 0;
+	fn->wcs = NULL;
+	fn->wcslen = 0;
+#endif
+
+	*fnp = fn;
+	return 0;
+}
+
+void
+freewinfn(struct msdosfs_winfn *fn, struct msdosfsmount *pmp)
+{
+
+	if (fn) {
+#if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
+		if (fn->wn)
+			PNBUF_PUT(fn->wn);
+		if (fn->lcwn)
+			PNBUF_PUT(fn->lcwn);
+		if (fn->wcs)
+			WPNBUF_PUT(fn->wcs);
+#endif
+		free(fn, M_MSDOSFSTMP);
+	}
 }

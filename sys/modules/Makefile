@@ -286,4 +286,31 @@ SUBDIR+=	emdtv
 SUBDIR+=	iscsi
 .endif
 
+.if (${MKKICONV} != "no")
+SUBDIR+=	kiconv
+SUBDIR+=	kiconv_BIG5
+SUBDIR+=	kiconv_DECHanyu
+SUBDIR+=	kiconv_EUC
+SUBDIR+=	kiconv_EUCTW
+SUBDIR+=	kiconv_GBK2K
+SUBDIR+=	kiconv_HZ
+SUBDIR+=	kiconv_ISO2022
+SUBDIR+=	kiconv_JOHAB
+SUBDIR+=	kiconv_MSKanji
+SUBDIR+=	kiconv_UES
+SUBDIR+=	kiconv_UTF1632
+SUBDIR+=	kiconv_UTF7
+SUBDIR+=	kiconv_UTF8
+SUBDIR+=	kiconv_VIQR
+SUBDIR+=	kiconv_ZW
+SUBDIR+=	kiconv_iconv_none
+SUBDIR+=	kiconv_iconv_std
+SUBDIR+=	kiconv_mapper_646
+SUBDIR+=	kiconv_mapper_none
+SUBDIR+=	kiconv_mapper_serial
+SUBDIR+=	kiconv_mapper_parallel
+SUBDIR+=	kiconv_mapper_std
+SUBDIR+=	kiconv_mapper_zone
+.endif
+
 .include <bsd.subdir.mk>

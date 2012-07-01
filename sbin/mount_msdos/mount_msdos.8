@@ -41,7 +41,9 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl 9Gls
+.Op Fl C Ar codepage
 .Op Fl g Ar gid
+.Op Fl I Ar iocharset
 .Op Fl M Ar mask
 .Op Fl m Ar mask
 .Op Fl o Ar options
@@ -79,6 +81,9 @@ Ignore the special Win'95 directory entries even
 if deleting or renaming a file.
 This forces
 .Fl s .
+.It Fl C Ar codepage
+Specify the MS-DOS code page (aka IBM/OEM code page) name used for
+file name conversions for DOS names.
 .It Fl G
 This option causes the filesystem to be interpreted as an Atari-Gemdos
 filesystem.
@@ -92,6 +97,8 @@ Set the group of the files in the file system to
 .Ar gid .
 The default group is the group of the directory
 on which the file system is being mounted.
+.It Fl I Ar iocharset
+Specify the I/O charset name used for file name conversions.
 .It Fl l
 Force listing and generation of
 Win'95 long filenames
@@ -168,11 +175,20 @@ directories searchable, use:
 .It
 mount_msdos -m 0644 -M 0755 /dev/wd0e /msdos
 .El
+.Pp
+To mount a Japanese MS-DOS file system:
+.Bl -item -offset indent
+.It
+mount_msdos -C cp932 /dev/sd0e /msdos
+.El
 .Sh SEE ALSO
 .Xr mount 2 ,
 .Xr unmount 2 ,
 .Xr fstab 5 ,
 .Xr mount 8
+.Pp
+List of Localized MS Operating Systems:
+.Pa http://msdn.microsoft.com/ja-jp/goglobal/cc563921.aspx
 .Sh HISTORY
 The
 .Nm

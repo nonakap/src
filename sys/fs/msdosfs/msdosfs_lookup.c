@@ -120,6 +120,7 @@ msdosfs_lookup(void *v)
 	struct buf *bp = 0;
 	struct direntry *dep;
 	u_char dosfilename[12];
+	struct msdosfs_winfn *fn = NULL;
 	int flags;
 	int nameiop = cnp->cn_nameiop;
 	int wincnt = 1;
@@ -144,11 +145,13 @@ msdosfs_lookup(void *v)
 	 * Check accessiblity of directory.
 	 */
 	if ((error = VOP_ACCESS(vdp, VEXEC, cnp->cn_cred)) != 0)
-		return (error);
+		goto error;
 
 	if ((flags & ISLASTCN) && (vdp->v_mount->mnt_flag & MNT_RDONLY) &&
-	    (cnp->cn_nameiop == DELETE || cnp->cn_nameiop == RENAME))
-		return (EROFS);
+	    (cnp->cn_nameiop == DELETE || cnp->cn_nameiop == RENAME)) {
+		error = EROFS;
+		goto error;
+	}
 
 	/*
 	 * We now have a segment name to search for, and a directory to search.
@@ -159,7 +162,11 @@ msdosfs_lookup(void *v)
 	 */
 	if (cache_lookup(vdp, cnp->cn_nameptr, cnp->cn_namelen,
 			 cnp->cn_nameiop, cnp->cn_flags, NULL, vpp)) {
-		return *vpp == NULLVP ? ENOENT: 0;
+		if (*vpp == NULLVP) {
+			error = ENOENT;
+			goto error;
+		}
+		goto done;
 	}
 
 	/*
@@ -180,20 +187,22 @@ msdosfs_lookup(void *v)
 		goto foundroot;
 	}
 
-	switch (unix2dosfn((const u_char *)cnp->cn_nameptr, dosfilename,
-	    cnp->cn_namelen, 0)) {
+	error = newwinfn(cnp, &fn, pmp);
+	if (error)
+		goto error;
+
+	switch (unix2dosfn(fn, dosfilename, 0, pmp)) {
 	case 0:
-		return (EINVAL);
+		error = EINVAL;
+		goto error;
 	case 1:
 		break;
 	case 2:
-		wincnt = winSlotCnt((const u_char *)cnp->cn_nameptr,
-		    cnp->cn_namelen) + 1;
+		wincnt = winSlotCnt(fn, pmp) + 1;
 		break;
 	case 3:
 		olddos = 0;
-		wincnt = winSlotCnt((const u_char *)cnp->cn_nameptr,
-		    cnp->cn_namelen) + 1;
+		wincnt = winSlotCnt(fn, pmp) + 1;
 		break;
 	}
 	if (pmp->pm_flags & MSDOSFSMNT_SHORTNAME)
@@ -230,12 +239,12 @@ msdosfs_lookup(void *v)
 		if ((error = pcbmap(dp, frcn, &bn, &cluster, &blsize)) != 0) {
 			if (error == E2BIG)
 				break;
-			return (error);
+			goto error;
 		}
 		error = bread(pmp->pm_devvp, de_bn2kb(pmp, bn), blsize, NOCRED,
 		    0, &bp);
 		if (error) {
-			return (error);
+			goto error;
 		}
 		for (blkoff = 0; blkoff < blsize;
 		     blkoff += sizeof(struct direntry),
@@ -280,10 +289,7 @@ msdosfs_lookup(void *v)
 					if (pmp->pm_flags & MSDOSFSMNT_SHORTNAME)
 						continue;
 
-					chksum = winChkName((const u_char *)cnp->cn_nameptr,
-							    cnp->cn_namelen,
-							    (struct winentry *)dep,
-							    chksum);
+					chksum = winChkName(fn, (struct winentry *)dep, chksum, pmp);
 					continue;
 				}
 
@@ -363,7 +369,7 @@ notfound:
 		 */
 		error = VOP_ACCESS(vdp, VWRITE, cnp->cn_cred);
 		if (error)
-			return (error);
+			goto error;
 
 		/*
 		 * Fixup the slot description to point to the place where
@@ -397,7 +403,8 @@ notfound:
 		 * NB - if the directory is unlocked, then this
 		 * information cannot be used.
 		 */
-		return (EJUSTRETURN);
+		error = EJUSTRETURN;
+		goto error;
 	}
 
 #if 0
@@ -416,7 +423,8 @@ notfound:
 			    cnp->cn_flags);
 #endif
 
-	return (ENOENT);
+	error = ENOENT;
+	goto error;
 
 found:
 	/*
@@ -470,15 +478,17 @@ foundroot:
 		/*
 		 * Don't allow deleting the root.
 		 */
-		if (blkoff == MSDOSFSROOT_OFS)
-			return EINVAL;
+		if (blkoff == MSDOSFSROOT_OFS) {
+			error = EINVAL;
+			goto error;
+		}
 
 		/*
 		 * Write access to directory required to delete files.
 		 */
 		error = VOP_ACCESS(vdp, VWRITE, cnp->cn_cred);
 		if (error)
-			return (error);
+			goto error;
 
 		/*
 		 * Return pointer to current entry in dp->i_offset.
@@ -487,12 +497,12 @@ foundroot:
 		if (dp->de_StartCluster == scn && isadir) {	/* "." */
 			vref(vdp);
 			*vpp = vdp;
-			return (0);
+			goto done;
 		}
 		if ((error = deget(pmp, cluster, blkoff, &tdp)) != 0)
-			return (error);
+			goto error;
 		*vpp = DETOV(tdp);
-		return (0);
+		goto done;
 	}
 
 	/*
@@ -503,27 +513,33 @@ foundroot:
 	 */
 	if (nameiop == RENAME && (flags & ISLASTCN)) {
 
-		if (vdp->v_mount->mnt_flag & MNT_RDONLY)
-			return (EROFS);
+		if (vdp->v_mount->mnt_flag & MNT_RDONLY) {
+			error = EROFS;
+			goto error;
+		}
 
-		if (blkoff == MSDOSFSROOT_OFS)
-			return EINVAL;
+		if (blkoff == MSDOSFSROOT_OFS) {
+			error = EINVAL;
+			goto error;
+		}
 
 		error = VOP_ACCESS(vdp, VWRITE, cnp->cn_cred);
 		if (error)
-			return (error);
+			goto error;
 
 		/*
 		 * Careful about locking second inode.
 		 * This can only occur if the target is ".".
 		 */
-		if (dp->de_StartCluster == scn && isadir)
-			return (EISDIR);
+		if (dp->de_StartCluster == scn && isadir) {
+			error = EISDIR;
+			goto error;
+		}
 
 		if ((error = deget(pmp, cluster, blkoff, &tdp)) != 0)
-			return (error);
+			goto error;
 		*vpp = DETOV(tdp);
-		return (0);
+		goto done;
 	}
 
 	/*
@@ -551,7 +567,7 @@ foundroot:
 		error = deget(pmp, cluster, blkoff, &tdp);
 		vn_lock(pdp, LK_EXCLUSIVE | LK_RETRY);
 		if (error) {
-			return error;
+			goto error;
 		}
 		*vpp = DETOV(tdp);
 	} else if (dp->de_StartCluster == scn && isadir) {
@@ -559,7 +575,7 @@ foundroot:
 		*vpp = vdp;
 	} else {
 		if ((error = deget(pmp, cluster, blkoff, &tdp)) != 0)
-			return (error);
+			goto error;
 		*vpp = DETOV(tdp);
 	}
 
@@ -568,7 +584,13 @@ foundroot:
 	 */
 	cache_enter(vdp, *vpp, cnp->cn_nameptr, cnp->cn_namelen, cnp->cn_flags);
 
-	return 0;
+ done:
+	freewinfn(fn, pmp);
+	return (0);
+
+ error:
+	freewinfn(fn, pmp);
+	return (error);
 }
 #endif /* _KERNEL */
 
@@ -577,10 +599,10 @@ foundroot:
  * ddep - directory to add to
  * depp - return the address of the denode for the created directory entry
  *	  if depp != 0
- * cnp  - componentname needed for Win95 long filenames
+ * fn   - componentname needed for Win95 long filenames
  */
 int
-createde(struct denode *dep, struct denode *ddep, struct denode **depp, struct componentname *cnp)
+createde(struct denode *dep, struct denode *ddep, struct denode **depp, struct msdosfs_winfn *fn)
 {
 	int error, rberror;
 	u_long dirclust, clusoffset;
@@ -597,8 +619,8 @@ createde(struct denode *dep, struct denode *ddep, struct denode **depp, struct c
 #endif
 
 #ifdef MSDOSFS_DEBUG
-	printf("createde(dep %p, ddep %p, depp %p, cnp %p)\n",
-	    dep, ddep, depp, cnp);
+	printf("createde(dep %p, ddep %p, depp %p, fn %p)\n",
+	    dep, ddep, depp, fn);
 #endif
 
 	/*
@@ -649,8 +671,6 @@ createde(struct denode *dep, struct denode *ddep, struct denode **depp, struct c
 	 */
 	if (ddep->de_fndcnt > 0) {
 		u_int8_t chksum = winChksum(ndep->deName);
-		const u_char *un = (const u_char *)cnp->cn_nameptr;
-		int unlen = cnp->cn_namelen;
 		u_long xhavecnt;
 
 		fndoffset = ddep->de_fndoffset;
@@ -684,8 +704,8 @@ createde(struct denode *dep, struct denode *ddep, struct denode **depp, struct c
 				ndep--;
 				fndoffset -= sizeof(struct direntry);
 			}
-			if (!unix2winfn(un, unlen, (struct winentry *)ndep,
-						wcnt, chksum))
+			if (!unix2winfn(fn, (struct winentry *)ndep,
+						wcnt, chksum, pmp))
 				break;
 		}
 	}
@@ -1059,7 +1079,7 @@ removede(struct denode *pdep, struct denode *dep)
  * Create a unique DOS name in dvp
  */
 int
-uniqdosname(struct denode *dep, struct componentname *cnp, u_char *cp)
+uniqdosname(struct denode *dep, struct msdosfs_winfn *fn, u_char *cp)
 {
 	struct msdosfsmount *pmp = dep->de_pmp;
 	struct direntry *dentp;
@@ -1074,8 +1094,7 @@ uniqdosname(struct denode *dep, struct componentname *cnp, u_char *cp)
 		/*
 		 * Generate DOS name with generation number
 		 */
-		if (!unix2dosfn((const u_char *)cnp->cn_nameptr, cp,
-		    cnp->cn_namelen, gen))
+		if (!unix2dosfn(fn, cp, gen, pmp))
 			return gen == 1 ? EINVAL : EEXIST;
 
 		/*

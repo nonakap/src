@@ -45,12 +45,16 @@ __RCSID("$NetBSD: mount_msdos.c,v 1.47 2009/10/07 20:34:02 pooka Exp $");
 #include <msdosfs/msdosfsmount.h>
 #include <err.h>
 #include <grp.h>
+#include <locale.h>
+#include <iconv.h>
+#include <langinfo.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <ctype.h>
 #include <util.h>
 
 #include <mntopts.h>
@@ -90,11 +94,12 @@ mount_msdos_parseargs(int argc, char **argv,
 	time_t now;
 	struct tm *tm;
 	mntoptparse_t mp;
+	size_t len;
 
 	*mntflags = set_gid = set_uid = set_mask = set_dirmask = set_gmtoff = 0;
 	(void)memset(args, '\0', sizeof(*args));
 
-	while ((c = getopt(argc, argv, "Gsl9u:g:m:M:o:t:")) != -1) {
+	while ((c = getopt(argc, argv, "Gsl9u:g:m:M:o:t:C:I:")) != -1) {
 		switch (c) {
 		case 'G':
 			args->flags |= MSDOSFSMNT_GEMDOSFS;
@@ -133,6 +138,25 @@ mount_msdos_parseargs(int argc, char **argv,
 		case 't':
 			args->gmtoff = atoi(optarg);
 			set_gmtoff = 1;
+			break;
+		case 'C':
+			len = strlen(optarg);
+			if (len >= sizeof(args->codepage)) {
+				fprintf(stderr, "error: codepage(%s) is "
+				    "too long.\n", optarg);
+				exit(1);
+			}
+			strlcpy(args->codepage, optarg, sizeof(args->codepage));
+			break;
+		case 'I':
+			len = strlen(optarg);
+			if (len >= sizeof(args->iocharset)) {
+				fprintf(stderr, "error: iocharset(%s) is "
+				    "too long.\n", optarg);
+				exit(1);
+			}
+			strlcpy(args->iocharset, optarg,
+			    sizeof(args->iocharset));
 			break;
 		case '?':
 		default:
@@ -180,6 +204,32 @@ mount_msdos_parseargs(int argc, char **argv,
 		args->gmtoff = tm->tm_gmtoff;
 
 	}
+
+	if (args->codepage[0] != '\0' && args->iocharset[0] == '\0') {
+		const char *codeset = nl_langinfo(CODESET);
+		if (strlen(codeset) >= sizeof(args->iocharset)) {
+			fprintf(stderr, "warning: current codeset(%s) "
+			    "is too long.\n", codeset);
+			goto disabled;
+		}
+		strlcpy(args->iocharset, codeset, sizeof(args->iocharset));
+	}
+	if (args->codepage[0] != '\0' && args->iocharset[0] != '\0') {
+		iconv_t ic = iconv_open(args->iocharset, args->codepage);
+		if (ic == (iconv_t)-1) {
+			fprintf(stderr, "warning: unusable codepage(%s) or "
+			    "iocharset(%s).\n",
+			    args->codepage, args->iocharset);
+			goto disabled;
+		}
+		iconv_close(ic);
+	} else if (args->codepage[0] != '\0' || args->iocharset[0] != '\0') {
+disabled:
+		/* disable filename convertion */
+		fprintf(stderr, "warning: disable filename conversion.\n");
+		args->codepage[0] = args->iocharset[0] = '\0';
+	}
+
 	args->flags |= MSDOSFSMNT_VERSIONED;
 	args->version = MSDOSFSMNT_VERSION;
 }
@@ -191,6 +241,8 @@ mount_msdos(int argc, char **argv)
 	char canon_dev[MAXPATHLEN], canon_dir[MAXPATHLEN];
 	int mntflags;
 
+	setlocale(LC_CTYPE, "");
+
 	mount_msdos_parseargs(argc, argv, &args, &mntflags,
 	    canon_dev, canon_dir);
 
@@ -200,8 +252,10 @@ mount_msdos(int argc, char **argv)
 	if (mntflags & MNT_GETARGS) {
 		char buf[1024];
 		(void)snprintb(buf, sizeof(buf), MSDOSFSMNT_BITS, args.flags);
-		printf("uid=%d, gid=%d, mask=0%o, dirmask=0%o, flags=%s\n",
-		    args.uid, args.gid, args.mask, args.dirmask, buf);
+		printf("uid=%d, gid=%d, mask=0%o, dirmask=0%o, gmtoff=%d, "
+		    "codepage=%s, codeset=%s, flags=%s\n",
+		    args.uid, args.gid, args.mask, args.dirmask, args.gmtoff,
+		    args.codepage, args.iocharset, buf);
 	}
 
 	exit (0);
@@ -211,8 +265,8 @@ static void
 usage(void)
 {
 
-	fprintf(stderr, "usage: %s [-9Gls] [-g gid] [-M mask] [-m mask] "
-	    "[-o options]\n\t[-t gmtoff] [-u uid] special mountpath\n",
+	fprintf(stderr, "usage: %s [-9Gls] [-C codepage] [-g gid] [-M mask]\n"
+	    "\t[-m mask] [-o options] [-t gmtoff] [-u uid] special mountpath\n",
 	    getprogname());
 	exit(1);
 }

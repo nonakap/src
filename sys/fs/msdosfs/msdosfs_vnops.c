@@ -114,6 +114,8 @@ msdosfs_create(void *v)
 	struct denode ndirent;
 	struct denode *dep;
 	struct denode *pdep = VTODE(ap->a_dvp);
+	struct msdosfsmount *pmp = pdep->de_pmp;
+	struct msdosfs_winfn *fn = NULL;
 	int error;
 
 #ifdef MSDOSFS_DEBUG
@@ -138,8 +140,10 @@ msdosfs_create(void *v)
 	 * use the absence of the owner write bit to make the file
 	 * readonly.
 	 */
+	if ((error = newwinfn(cnp, &fn, pmp)) != 0)
+		goto bad;
 	memset(&ndirent, 0, sizeof(ndirent));
-	if ((error = uniqdosname(pdep, cnp, ndirent.de_Name)) != 0)
+	if ((error = uniqdosname(pdep, fn, ndirent.de_Name)) != 0)
 		goto bad;
 
 	ndirent.de_Attributes = (ap->a_vap->va_mode & S_IWUSR) ?
@@ -151,8 +155,9 @@ msdosfs_create(void *v)
 	ndirent.de_pmp = pdep->de_pmp;
 	ndirent.de_flag = DE_ACCESS | DE_CREATE | DE_UPDATE;
 	DETIMES(&ndirent, NULL, NULL, NULL, pdep->de_pmp->pm_gmtoff);
-	if ((error = createde(&ndirent, pdep, &dep, cnp)) != 0)
+	if ((error = createde(&ndirent, pdep, &dep, fn)) != 0)
 		goto bad;
+	freewinfn(fn, pmp);
 	fstrans_done(ap->a_dvp->v_mount);
 	VN_KNOTE(ap->a_dvp, NOTE_WRITE);
 	vput(ap->a_dvp);
@@ -160,6 +165,7 @@ msdosfs_create(void *v)
 	return (0);
 
 bad:
+	freewinfn(fn, pmp);
 	fstrans_done(ap->a_dvp->v_mount);
 	vput(ap->a_dvp);
 	return (error);
@@ -842,6 +848,7 @@ msdosfs_rename(void *v)
 	struct msdosfsmount *pmp;
 	struct direntry *dotdotp;
 	struct buf *bp;
+	struct msdosfs_winfn *tfn = NULL;
 
 	pmp = VFSTOMSDOSFS(fdvp->v_mount);
 
@@ -992,7 +999,9 @@ abortit:
 	 * into the denode and directory entry for the destination
 	 * file/directory.
 	 */
-	if ((error = uniqdosname(VTODE(tdvp), tcnp, toname)) != 0) {
+	if ((error = newwinfn(tcnp, &tfn, pmp)) != 0)
+		goto abortit;
+	if ((error = uniqdosname(VTODE(tdvp), tfn, toname)) != 0) {
 		fstrans_done(fdvp->v_mount);
 		goto abortit;
 	}
@@ -1009,8 +1018,7 @@ abortit:
 		VOP_UNLOCK(fdvp);
 		vrele(ap->a_fvp);
 		vrele(tdvp);
-		fstrans_done(fdvp->v_mount);
-		return (error);
+		goto out;
 	}
 	if (fvp == NULL) {
 		/*
@@ -1021,8 +1029,8 @@ abortit:
 		vput(fdvp);
 		vrele(ap->a_fvp);
 		vrele(tdvp);
-		fstrans_done(fdvp->v_mount);
-		return 0;
+		error = 0;
+		goto out;
 	}
 	VOP_UNLOCK(fdvp);
 	xp = VTODE(fvp);
@@ -1058,7 +1066,7 @@ abortit:
 		memcpy(ip->de_Name, toname, 11);	/* update denode */
 		dp->de_fndoffset = to_diroffset;
 		dp->de_fndcnt = to_count;
-		error = createde(ip, dp, (struct denode **)0, tcnp);
+		error = createde(ip, dp, (struct denode **)0, tfn);
 		if (error) {
 			memcpy(ip->de_Name, oldname, 11);
 			VOP_UNLOCK(fvp);
@@ -1129,6 +1137,8 @@ bad:
 	ip->de_flag &= ~DE_RENAME;
 	vrele(fdvp);
 	vrele(fvp);
+out:
+	freewinfn(tfn, pmp);
 	fstrans_done(fdvp->v_mount);
 	return (error);
 
@@ -1185,6 +1195,7 @@ msdosfs_mkdir(void *v)
 	struct msdosfsmount *pmp = pdep->de_pmp;
 	struct buf *bp;
 	int async = pdep->de_pmp->pm_mountp->mnt_flag & MNT_ASYNC;
+	struct msdosfs_winfn *fn = NULL;
 
 	fstrans_start(ap->a_dvp->v_mount, FSTRANS_SHARED);
 	/*
@@ -1257,7 +1268,9 @@ msdosfs_mkdir(void *v)
 	 * cluster.  This will be written to an empty slot in the parent
 	 * directory.
 	 */
-	if ((error = uniqdosname(pdep, cnp, ndirent.de_Name)) != 0)
+	if ((error = newwinfn(cnp, &fn, pmp)) != 0)
+		goto bad;
+	if ((error = uniqdosname(pdep, fn, ndirent.de_Name)) != 0)
 		goto bad;
 
 	ndirent.de_Attributes = ATTR_DIRECTORY;
@@ -1265,11 +1278,12 @@ msdosfs_mkdir(void *v)
 	ndirent.de_FileSize = 0;
 	ndirent.de_dev = pdep->de_dev;
 	ndirent.de_devvp = pdep->de_devvp;
-	if ((error = createde(&ndirent, pdep, &dep, cnp)) != 0)
+	if ((error = createde(&ndirent, pdep, &dep, fn)) != 0)
 		goto bad;
 	VN_KNOTE(ap->a_dvp, NOTE_WRITE | NOTE_LINK);
 	vput(ap->a_dvp);
 	*ap->a_vpp = DETOV(dep);
+	freewinfn(fn, pmp);
 	fstrans_done(ap->a_dvp->v_mount);
 	return (0);
 
@@ -1277,6 +1291,7 @@ bad:
 	clusterfree(pmp, newcluster, NULL);
 bad2:
 	vput(ap->a_dvp);
+	freewinfn(fn, pmp);
 	fstrans_done(ap->a_dvp->v_mount);
 	return (error);
 }
@@ -1531,7 +1546,7 @@ msdosfs_readdir(void *v)
 				if (pmp->pm_flags & MSDOSFSMNT_SHORTNAME)
 					continue;
 				chksum = win2unixfn((struct winentry *)dentp,
-				    dirbuf, chksum);
+				    dirbuf, chksum, pmp);
 				continue;
 			}
 
@@ -1571,7 +1586,10 @@ msdosfs_readdir(void *v)
 			if (chksum != winChksum(dentp->deName))
 				dirbuf->d_namlen = dos2unixfn(dentp->deName,
 				    (u_char *)dirbuf->d_name,
-				    pmp->pm_flags & MSDOSFSMNT_SHORTNAME);
+				    dentp->deLowerCase |
+				      ((pmp->pm_flags & MSDOSFSMNT_SHORTNAME)
+				        ? (LCASE_BASE | LCASE_EXT) : 0),
+				    pmp);
 			else
 				dirbuf->d_name[dirbuf->d_namlen] = 0;
 			chksum = -1;
