@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -44,13 +46,12 @@ __FBSDID("$FreeBSD$");
 #include <uvm/uvm_extern.h>
 
 #include <machine/pmap.h>
-#include <machine/vmparam.h>
 
 #include <machine/vmm.h>
 #include <machine/vmm_dev.h>
-#include <arch/amd64/vmm/vmm_lapic.h>
-#include <arch/amd64/vmm/vmm_stat.h>
-#include <arch/amd64/vmm/io/ppt.h>
+#include <amd64/vmm/vmm_lapic.h>
+#include <amd64/vmm/vmm_stat.h>
+#include <amd64/vmm/io/ppt.h>
 
 struct vmmdev_softc {
 	struct vm	*vm;		/* vm instance cookie */

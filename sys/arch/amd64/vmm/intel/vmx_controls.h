@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -26,8 +28,8 @@
  * $FreeBSD$
  */
 
-#ifndef _VMX_CONTROLS_H_
-#define	_VMX_CONTROLS_H_
+#ifndef _VMM_INTEL_VMX_CONTROLS_H_
+#define	_VMM_INTEL_VMX_CONTROLS_H_
 
 /* Pin-Based VM-Execution Controls */
 #define	PINBASED_EXTINT_EXITING		(1 << 0)
@@ -89,4 +91,4 @@
 #define	VM_ENTRY_LOAD_PAT		(1 << 14)
 #define	VM_ENTRY_LOAD_EFER		(1 << 15)
 
-#endif
+#endif	/* _VMM_INTEL_VMX_CONTROLS_H_ */

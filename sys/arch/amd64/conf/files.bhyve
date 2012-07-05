@@ -3,7 +3,7 @@ define	vmmbus {}
 device	vmm
 attach	vmm at vmmbus
 
-file	arch/amd64/vmm/vmm.c			vmm
+file	arch/amd64/vmm/vmm.c			vmm needs-flag
 file	arch/amd64/vmm/vmm_dev.c		vmm
 file	arch/amd64/vmm/vmm_ipi.c		vmm
 file	arch/amd64/vmm/vmm_lapic.c		vmm
@@ -12,7 +12,7 @@ file	arch/amd64/vmm/vmm_msr.c		vmm
 file	arch/amd64/vmm/vmm_stat.c		vmm
 file	arch/amd64/vmm/vmm_util.c		vmm
 file	arch/amd64/vmm/x86.c			vmm
-file	arch/amd64/vmm/vmm_support.S
+file	arch/amd64/vmm/vmm_support.S		vmm
 
 file	arch/amd64/vmm/io/iommu.c		vmm
 #file	arch/amd64/vmm/io/ppt.c			vmm

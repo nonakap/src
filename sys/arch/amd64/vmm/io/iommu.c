@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -37,8 +39,8 @@ __FBSDID("$FreeBSD$");
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
 
-#include <arch/amd64/vmm/vmm_util.h>
-#include <arch/amd64/vmm/io/iommu.h>
+#include <amd64/vmm/vmm_util.h>
+#include <amd64/vmm/io/iommu.h>
 
 static boolean_t iommu_avail;
 static struct iommu_ops *ops;
@@ -61,7 +63,7 @@ IOMMU_CLEANUP(void)
 }
 
 static __inline void *
-IOMMU_CREATE_DOMAIN(vm_paddr_t maxaddr)
+IOMMU_CREATE_DOMAIN(paddr_t maxaddr)
 {
 
 	if (ops != NULL && iommu_avail)
@@ -79,7 +81,7 @@ IOMMU_DESTROY_DOMAIN(void *dom)
 }
 
 static __inline uint64_t
-IOMMU_CREATE_MAPPING(void *domain, vm_paddr_t gpa, vm_paddr_t hpa, uint64_t len)
+IOMMU_CREATE_MAPPING(void *domain, paddr_t gpa, paddr_t hpa, uint64_t len)
 {
 
 	if (ops != NULL && iommu_avail)
@@ -124,7 +126,7 @@ void
 iommu_init(void)
 {
 	int error, bus, slot, func;
-	vm_paddr_t maxaddr;
+	paddr_t maxaddr;
 	const char *name;
 	device_t dev;
 
@@ -185,7 +187,7 @@ iommu_cleanup(void)
 }
 
 void *
-iommu_create_domain(vm_paddr_t maxaddr)
+iommu_create_domain(paddr_t maxaddr)
 {
 
 	return (IOMMU_CREATE_DOMAIN(maxaddr));
@@ -199,7 +201,7 @@ iommu_destroy_domain(void *dom)
 }
 
 void
-iommu_create_mapping(void *dom, vm_paddr_t gpa, vm_paddr_t hpa, size_t len)
+iommu_create_mapping(void *dom, paddr_t gpa, paddr_t hpa, size_t len)
 {
 	uint64_t mapped, remaining;
 

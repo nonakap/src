@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -26,8 +28,8 @@
  * $FreeBSD$
  */
 
-#ifndef	_VMX_CPUFUNC_H_
-#define	_VMX_CPUFUNC_H_
+#ifndef	_VMM_INTEL_VMX_CPUFUNC_H_
+#define	_VMM_INTEL_VMX_CPUFUNC_H_
 
 struct vmcs;
 
@@ -44,7 +46,7 @@ struct vmcs;
 #define	VM_FAIL_VALID		2
 #define	VMX_SET_ERROR_CODE(varname)					\
 	do {								\
-	__asm __volatile("	jnc 1f;"				\
+	__asm volatile("	jnc 1f;"				\
 			 "	mov $1, %0;"	/* CF: error = 1 */	\
 			 "	jmp 3f;"				\
 			 "1:	jnz 2f;"				\
@@ -62,8 +64,8 @@ vmxon(char *region)
 	int error;
 	uint64_t addr;
 
-	addr = vtophys(region);
-	__asm __volatile("vmxon %0" : : "m" (*(uint64_t *)&addr) : "memory");
+	addr = vtophys((vaddr_t)region);
+	__asm volatile("vmxon %0" : : "m" (*(uint64_t *)&addr) : "memory");
 	VMX_SET_ERROR_CODE(error);
 	return (error);
 }
@@ -75,8 +77,8 @@ vmclear(struct vmcs *vmcs)
 	int error;
 	uint64_t addr;
 
-	addr = vtophys(vmcs);
-	__asm __volatile("vmclear %0" : : "m" (*(uint64_t *)&addr) : "memory");
+	addr = vtophys((vaddr_t)vmcs);
+	__asm volatile("vmclear %0" : : "m" (*(uint64_t *)&addr) : "memory");
 	VMX_SET_ERROR_CODE(error);
 	return (error);
 }
@@ -84,13 +86,13 @@ vmclear(struct vmcs *vmcs)
 static __inline void
 vmxoff(void)
 {
-	__asm __volatile("vmxoff");
+	__asm volatile("vmxoff");
 }
 
 static __inline void
 vmptrst(uint64_t *addr)
 {
-	__asm __volatile("vmptrst %0" : : "m" (*addr) : "memory");
+	__asm volatile("vmptrst %0" : : "m" (*addr) : "memory");
 }
 
 static __inline int
@@ -99,8 +101,8 @@ vmptrld(struct vmcs *vmcs)
 	int error;
 	uint64_t addr;
 
-	addr = vtophys(vmcs);
-	__asm __volatile("vmptrld %0" : : "m" (*(uint64_t *)&addr) : "memory");
+	addr = vtophys((vaddr_t)vmcs);
+	__asm volatile("vmptrld %0" : : "m" (*(uint64_t *)&addr) : "memory");
 	VMX_SET_ERROR_CODE(error);
 	return (error);
 }
@@ -110,7 +112,7 @@ vmwrite(uint64_t reg, uint64_t val)
 {
 	int error;
 
-	__asm __volatile("vmwrite %0, %1" : : "r" (val), "r" (reg) : "memory");
+	__asm volatile("vmwrite %0, %1" : : "r" (val), "r" (reg) : "memory");
 
 	VMX_SET_ERROR_CODE(error);
 
@@ -122,14 +124,14 @@ vmread(uint64_t r, uint64_t *addr)
 {
 	int error;
 
-	__asm __volatile("vmread %0, %1" : : "r" (r), "m" (*addr) : "memory");
+	__asm volatile("vmread %0, %1" : : "r" (r), "m" (*addr) : "memory");
 
 	VMX_SET_ERROR_CODE(error);
 
 	return (error);
 }
 
-static void __inline
+static __inline void
 VMCLEAR(struct vmcs *vmcs)
 {
 	int err;
@@ -138,15 +140,15 @@ VMCLEAR(struct vmcs *vmcs)
 	if (err != 0)
 		panic("%s: vmclear(%p) error %d", __func__, vmcs, err);
 
-	critical_exit();
+	/* XXX critical_exit(); */
 }
 
-static void __inline
+static __inline void
 VMPTRLD(struct vmcs *vmcs)
 {
 	int err;
 
-	critical_enter();
+	/* XXX critical_enter(); */
 
 	err = vmptrld(vmcs);
 	if (err != 0)
@@ -165,12 +167,12 @@ struct invvpid_desc {
 };
 CTASSERT(sizeof(struct invvpid_desc) == 16);
 
-static void __inline
+static __inline void
 invvpid(uint64_t type, struct invvpid_desc desc)
 {
 	int error;
 
-	__asm __volatile("invvpid %0, %1" :: "m" (desc), "r" (type) : "memory");
+	__asm volatile("invvpid %0, %1" :: "m" (desc), "r" (type) : "memory");
 
 	VMX_SET_ERROR_CODE(error);
 	if (error)
@@ -185,15 +187,16 @@ struct invept_desc {
 };
 CTASSERT(sizeof(struct invept_desc) == 16);
 
-static void __inline
+static __inline void
 invept(uint64_t type, struct invept_desc desc)
 {
 	int error;
 
-	__asm __volatile("invept %0, %1" :: "m" (desc), "r" (type) : "memory");
+	__asm volatile("invept %0, %1" :: "m" (desc), "r" (type) : "memory");
 
 	VMX_SET_ERROR_CODE(error);
 	if (error)
 		panic("invept error %d", error);
 }
-#endif
+
+#endif	/* _VMM_INTEL_VMX_CPUFUNC_H_ */

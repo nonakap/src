@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -26,8 +28,8 @@
  * $FreeBSD$
  */
 
-#ifndef	_EPT_H_
-#define	_EPT_H_
+#ifndef	_VMM_INTEL_EPT_H_
+#define	_VMM_INTEL_EPT_H_
 
 struct vmx;
 
@@ -35,8 +37,9 @@ struct vmx;
 #define	EPTP(pml4)	((pml4) | (EPT_PWLEVELS - 1) << 3 | PAT_WRITE_BACK)
 
 int	ept_init(void);
-int	ept_vmmmap(void *arg, vm_paddr_t gpa, vm_paddr_t hpa, size_t length,
-	    vm_memattr_t attr, int prot, boolean_t allow_superpage_mappings);
+int	ept_vmmmap(void *arg, paddr_t gpa, paddr_t hpa, size_t length,
+	    int /*vm_memattr_t*/ attr, int prot, boolean_t allow_superpage_mappings);
 void	ept_invalidate_mappings(u_long ept_pml4);
 void	ept_vmcleanup(struct vmx *vmx);
-#endif
+
+#endif	/* _VMM_INTEL_EPT_H_ */

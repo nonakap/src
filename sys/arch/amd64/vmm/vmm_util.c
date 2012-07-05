@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,11 +29,11 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 
-#include <arch/amd64/vmm/vmm_util.h>
+#include <amd64/vmm/vmm_util.h>
 
 boolean_t
 vmm_is_intel(void)

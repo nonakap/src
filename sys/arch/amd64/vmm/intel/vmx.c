@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -45,17 +47,17 @@ __FBSDID("$FreeBSD$");
 #include <machine/vmparam.h>
 
 #include <machine/vmm.h>
-#include <arch/amd64/vmm/vmm_lapic.h>
-#include <arch/amd64/vmm/vmm_msr.h>
-#include <arch/amd64/vmm/vmm_ktr.h>
-#include <arch/amd64/vmm/vmm_stat.h>
+#include <amd64/vmm/vmm_lapic.h>
+#include <amd64/vmm/vmm_msr.h>
+#include <amd64/vmm/vmm_ktr.h>
+#include <amd64/vmm/vmm_stat.h>
+#include <amd64/vmm/x86.h>
 
-#include <arch/amd64/vmm/intel/vmx_msr.h>
-#include <arch/amd64/vmm/intel/ept.h>
-#include <arch/amd64/vmm/intel/vmx_cpufunc.h>
-#include <arch/amd64/vmm/intel/vmx.h>
-#include <arch/amd64/vmm/x86.h>
-#include <arch/amd64/vmm/intel/vmx_controls.h>
+#include <amd64/vmm/intel/vmx_msr.h>
+#include <amd64/vmm/intel/ept.h>
+#include <amd64/vmm/intel/vmx_cpufunc.h>
+#include <amd64/vmm/intel/vmx.h>
+#include <amd64/vmm/intel/vmx_controls.h>
 
 #define	CR4_VMXE	(1UL << 13)
 

@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -29,7 +31,7 @@
 #include "opt_ddb.h"
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -40,10 +42,10 @@ __FBSDID("$FreeBSD$");
 #include <machine/pmap.h>
 
 #include <machine/vmm.h>
-#include <arch/amd64/vmm/intel/vmcs.h>
-#include <arch/amd64/vmm/intel/vmx_cpufunc.h>
-#include <arch/amd64/vmm/intel/ept.h>
-#include <arch/amd64/vmm/intel/vmx.h>
+#include <amd64/vmm/intel/vmcs.h>
+#include <amd64/vmm/intel/vmx_cpufunc.h>
+#include <amd64/vmm/intel/ept.h>
+#include <amd64/vmm/intel/vmx.h>
 
 #ifdef DDB
 #include <ddb/ddb.h>

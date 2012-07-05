@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,14 +29,14 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
 
 #include <machine/cpufunc.h>
 
-#include "vmx_msr.h"
+#include <amd64/vmm/intel/vmx_msr.h>
 
 static boolean_t
 vmx_ctl_allows_one_setting(uint64_t msr_val, int bitpos)

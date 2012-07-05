@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -44,17 +46,17 @@ __FBSDID("$FreeBSD$");
 #include <uvm/uvm_extern.h>
 
 #include <machine/pcb.h>
+
 #include <machine/vmm.h>
 #include <machine/vmm_dev.h>
-
-#include <arch/amd64/vmm/vmm_mem.h>
-#include <arch/amd64/vmm/vmm_util.h>
-#include <arch/amd64/vmm/vmm_msr.h>
-#include <arch/amd64/vmm/vmm_ipi.h>
-#include <arch/amd64/vmm/vmm_stat.h>
-#include <arch/amd64/vmm/io/vlapic.h>
-#include <arch/amd64/vmm/io/ppt.h>
-#include <arch/amd64/vmm/io/iommu.h>
+#include <amd64/vmm/vmm_mem.h>
+#include <amd64/vmm/vmm_util.h>
+#include <amd64/vmm/vmm_msr.h>
+#include <amd64/vmm/vmm_ipi.h>
+#include <amd64/vmm/vmm_stat.h>
+#include <amd64/vmm/io/vlapic.h>
+#include <amd64/vmm/io/ppt.h>
+#include <amd64/vmm/io/iommu.h>
 
 struct vlapic;
 

@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -26,10 +28,10 @@
  * $FreeBSD$
  */
 
-#ifndef _VMX_H_
-#define	_VMX_H_
+#ifndef _VMM_INTEL_VMX_H_
+#define	_VMM_INTEL_VMX_H_
 
-#include "vmcs.h"
+#include <amd64/vmm/intel/vmcs.h>
 
 #define	GUEST_MSR_MAX_ENTRIES	64		/* arbitrary */
 
@@ -83,7 +85,7 @@ struct vmxstate {
 
 /* virtual machine softc */
 struct vmx {
-	pml4_entry_t	pml4ept[NPML4EPG];
+	pd_entry_t	pml4ept[NTOPLEVEL_PDES];
 	struct vmcs	vmcs[VM_MAXCPU];	/* one vmcs per virtual cpu */
 	char		msr_bitmap[PAGE_SIZE];
 	struct msr_entry guest_msrs[VM_MAXCPU][GUEST_MSR_MAX_ENTRIES];
@@ -110,10 +112,10 @@ CTASSERT((offsetof(struct vmx, guest_msrs) & 15) == 0);
  */
 int	vmx_setjmp(struct vmxctx *ctx);
 void	vmx_longjmp(void);			/* returns via vmx_setjmp */
-void	vmx_launch(struct vmxctx *ctx) __dead2;	/* may return via vmx_setjmp */
-void	vmx_resume(struct vmxctx *ctx) __dead2;	/* may return via vmx_setjmp */
+void	vmx_launch(struct vmxctx *ctx) __dead;	/* may return via vmx_setjmp */
+void	vmx_resume(struct vmxctx *ctx) __dead;	/* may return via vmx_setjmp */
 
 u_long	vmx_fix_cr0(u_long cr0);
 u_long	vmx_fix_cr4(u_long cr4);
 
-#endif
+#endif	/* _VMM_INTEL_VMX_H_ */

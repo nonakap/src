@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -26,17 +28,17 @@
  * $FreeBSD$
  */
 
-#ifndef _IO_IOMMU_H_
-#define	_IO_IOMMU_H_
+#ifndef _VMM_IO_IOMMU_H_
+#define	_VMM_IO_IOMMU_H_
 
 typedef int (*iommu_init_func_t)(void);
 typedef void (*iommu_cleanup_func_t)(void);
 typedef void (*iommu_enable_func_t)(void);
 typedef void (*iommu_disable_func_t)(void);
-typedef void *(*iommu_create_domain_t)(vm_paddr_t maxaddr);
+typedef void *(*iommu_create_domain_t)(paddr_t maxaddr);
 typedef void (*iommu_destroy_domain_t)(void *domain);
-typedef uint64_t (*iommu_create_mapping_t)(void *domain, vm_paddr_t gpa,
-					   vm_paddr_t hpa, uint64_t len);
+typedef uint64_t (*iommu_create_mapping_t)(void *domain, paddr_t gpa,
+					   paddr_t hpa, uint64_t len);
 typedef void (*iommu_add_device_t)(void *domain, int bus, int slot, int func);
 typedef void (*iommu_remove_device_t)(void *dom, int bus, int slot, int func);
 
@@ -58,10 +60,10 @@ extern struct iommu_ops iommu_ops_amd;
 
 void	iommu_init(void);
 void	iommu_cleanup(void);
-void	*iommu_create_domain(vm_paddr_t maxaddr);
+void	*iommu_create_domain(paddr_t maxaddr);
 void	iommu_destroy_domain(void *dom);
-void	iommu_create_mapping(void *dom, vm_paddr_t gpa, vm_paddr_t hpa,
-			     size_t len);
+void	iommu_create_mapping(void *dom, paddr_t gpa, paddr_t hpa, size_t len);
 void	iommu_add_device(void *dom, int bus, int slot, int func);
 void	iommu_remove_device(void *dom, int bus, int slot, int func);
-#endif
+
+#endif	/* _VMM_IO_IOMMU_H_ */

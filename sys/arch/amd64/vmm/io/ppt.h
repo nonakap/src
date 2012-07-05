@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -26,8 +28,8 @@
  * $FreeBSD$
  */
 
-#ifndef _IO_PPT_H_
-#define	_IO_PPT_H_
+#ifndef _VMM_IO_PPT_H_
+#define	_VMM_IO_PPT_H_
 
 int	ppt_assign_device(struct vm *vm, int bus, int slot, int func);
 int	ppt_unassign_device(struct vm *vm, int bus, int slot, int func);
@@ -38,4 +40,5 @@ int	ppt_setup_msi(struct vm *vm, int vcpu, int bus, int slot, int func,
 		      int destcpu, int vector, int numvec);
 int	ppt_setup_msix(struct vm *vm, int vcpu, int bus, int slot, int func,
 		       int idx, uint32_t msg, uint32_t vector_control, uint64_t addr);
-#endif
+
+#endif	/* _VMM_IO_PPT_H_ */

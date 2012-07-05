@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/lock.h>
@@ -41,8 +43,8 @@ __FBSDID("$FreeBSD$");
 #include <machine/vmparam.h>
 #include <machine/pmap.h>
 
-#include <arch/amd64/vmm/vmm_util.h>
-#include <arch/amd64/vmm/vmm_mem.h>
+#include <amd64/vmm/vmm_util.h>
+#include <amd64/vmm/vmm_mem.h>
 
 static MALLOC_DEFINE(M_VMM_MEM, "vmm memory", "vmm memory");
 

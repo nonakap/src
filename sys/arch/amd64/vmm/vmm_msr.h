@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -29,8 +31,9 @@
 #ifndef	_VMM_MSR_H_
 #define	_VMM_MSR_H_
 
-#define	VMM_MSR_NUM	16
 struct vm;
+
+#define	VMM_MSR_NUM	16
 
 void	vmm_msr_init(void);
 int	emulate_wrmsr(struct vm *vm, int vcpu, u_int msr, uint64_t val);

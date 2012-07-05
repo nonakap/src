@@ -540,6 +540,18 @@
 #define	MSR_RDTSCP_AUX			0xc0000103
 
 /*
+ * PAT modes.
+ */
+#define	PAT_UNCACHEABLE		0x00
+#define	PAT_WRITE_COMBINING	0x01
+#define	PAT_WRITE_THROUGH	0x04
+#define	PAT_WRITE_PROTECTED	0x05
+#define	PAT_WRITE_BACK		0x06
+#define	PAT_UNCACHED		0x07
+#define	PAT_VALUE(i, m)		((long long)(m) << (8 * (i)))
+#define	PAT_MASK(i)		PAT_VALUE(i, 0xff)
+
+/*
  * Constants related to MTRRs
  */
 #define MTRR_N64K		8	/* numbers of fixed-size entries */

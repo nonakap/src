@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -26,8 +28,8 @@
  * $FreeBSD$
  */
 
-#ifndef _VMX_MSR_H_
-#define	_VMX_MSR_H_
+#ifndef _VMM_INTEL_VMX_MSR_H_
+#define	_VMM_INTEL_VMX_MSR_H_
 
 #define	MSR_VMX_BASIC			0x480
 #define	MSR_VMX_EPT_VPID_CAP		0x48C
@@ -54,8 +56,8 @@
 
 uint32_t vmx_revision(void);
 
-int vmx_set_ctlreg(int ctl_reg, int true_ctl_reg, uint32_t ones_mask,
-		   uint32_t zeros_mask, uint32_t *retval);
+int	vmx_set_ctlreg(int ctl_reg, int true_ctl_reg, uint32_t ones_mask,
+	    uint32_t zeros_mask, uint32_t *retval);
 
 /*
  * According to Section 21.10.4 "Software Access to Related Structures",
@@ -75,4 +77,4 @@ int vmx_set_ctlreg(int ctl_reg, int true_ctl_reg, uint32_t ones_mask,
 void	msr_bitmap_initialize(char *bitmap);
 int	msr_bitmap_change_access(char *bitmap, u_int msr, int access);
 
-#endif
+#endif	/* _VMM_INTEL_VMX_MSR_H_ */

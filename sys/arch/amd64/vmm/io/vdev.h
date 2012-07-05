@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -26,8 +28,8 @@
  * $FreeBSD$
  */
 
-#ifndef _VDEV_H_
-#define	_VDEV_H_
+#ifndef _VMM_IO_VDEV_H_
+#define	_VMM_IO_VDEV_H_
 
 typedef enum {
 	BYTE	= 1,
@@ -80,5 +82,4 @@ int vdev_halt(void);
 int vdev_memread(uint64_t gpa, opsize_t size, uint64_t *data);
 int vdev_memwrite(uint64_t gpa, opsize_t size, uint64_t data);
 
-#endif	/* _VDEV_H_ */
-
+#endif	/* _VMM_IO_VDEV_H_ */

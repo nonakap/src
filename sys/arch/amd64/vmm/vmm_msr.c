@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -35,8 +37,8 @@ __FBSDID("$FreeBSD$");
 #include <machine/specialreg.h>
 
 #include <machine/vmm.h>
-#include <arch/amd64/vmm/vmm_lapic.h>
-#include <arch/amd64/vmm/vmm_msr.h>
+#include <amd64/vmm/vmm_lapic.h>
+#include <amd64/vmm/vmm_msr.h>
 
 #define	VMM_MSR_F_EMULATE	0x01
 #define	VMM_MSR_F_READONLY	0x02

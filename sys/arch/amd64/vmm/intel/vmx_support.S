@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -26,9 +28,9 @@
  * $FreeBSD$
  */
 
-#include <machine/asmacros.h>
+#include <machine/asm.h>
 
-#include "vmx_assym.s"
+#include "assym.h"
 
 /*
  * Assumes that %rdi holds a pointer to the 'vmxctx'.

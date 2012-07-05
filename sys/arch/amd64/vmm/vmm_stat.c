@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -35,7 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/malloc.h>
 
 #include <machine/vmm.h>
-#include <arch/amd64/vmm/vmm_stat.h>
+#include <amd64/vmm/vmm_stat.h>
 
 static int vstnum;
 static struct vmm_stat_type *vsttab[MAX_VMM_STAT_TYPES];

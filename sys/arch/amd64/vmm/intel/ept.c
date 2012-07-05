@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -29,23 +31,23 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/errno.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
+#include <sys/xcall.h>
 
 #include <uvm/uvm_extern.h>
 
-#include <machine/param.h>
 #include <machine/cpufunc.h>
 #include <machine/pmap.h>
-#include <machine/vmparam.h>
 
 #include <machine/vmm.h>
-#include "vmx_cpufunc.h"
-#include "vmx_msr.h"
-#include "vmx.h"
-#include "ept.h"
+#include <amd64/vmm/intel/vmx_cpufunc.h>
+#include <amd64/vmm/intel/vmx_msr.h>
+#include <amd64/vmm/intel/vmx.h>
+#include <amd64/vmm/intel/ept.h>
 
 #define	EPT_PWL4(cap)			((cap) & (1UL << 6))
 #define	EPT_MEMORY_TYPE_WB(cap)		((cap) & (1UL << 14))
@@ -114,8 +116,8 @@ ept_init(void)
 }
 
 static size_t
-ept_create_mapping(uint64_t *ptp, vm_paddr_t gpa, vm_paddr_t hpa, size_t length,
-		   vm_memattr_t attr, vm_prot_t prot, boolean_t spok)
+ept_create_mapping(uint64_t *ptp, paddr_t gpa, paddr_t hpa, size_t length,
+		   int /*vm_memattr_t*/ attr, vm_prot_t prot, boolean_t spok)
 {
 	int spshift, ptpshift, ptpindex, nlevels;
 
@@ -150,7 +152,7 @@ ept_create_mapping(uint64_t *ptp, vm_paddr_t gpa, vm_paddr_t hpa, size_t length,
 	nlevels = EPT_PWLEVELS;
 	while (--nlevels >= 0) {
 		ptpshift = PAGE_SHIFT + nlevels * 9;
-		ptpindex = (gpa >> ptpshift) & 0x1FF;
+		ptpindex = (gpa >> ptpshift) & 0x1ff;
 
 		/* We have reached the leaf mapping */
 		if (spshift >= ptpshift)
@@ -163,13 +165,13 @@ ept_create_mapping(uint64_t *ptp, vm_paddr_t gpa, vm_paddr_t hpa, size_t length,
 		 * to it from the current page table.
 		 */
 		if (ptp[ptpindex] == 0) {
-			void *nlp = malloc(PAGE_SIZE, M_VMX, M_WAITOK | M_ZERO);
-			ptp[ptpindex] = vtophys(nlp);
+			void *nlp = malloc(PAGE_SIZE, M_VMX, M_WAITOK | M_ZERO); /* XXX: pool_kmem(9)? */
+			ptp[ptpindex] = vtophys((vaddr_t)nlp);
 			ptp[ptpindex] |= EPT_PG_RD | EPT_PG_WR | EPT_PG_EX;
 		}
 
 		/* Work our way down to the next level page table page */
-		ptp = (uint64_t *)PHYS_TO_DMAP(ptp[ptpindex] & EPT_ADDR_MASK);
+		ptp = (uint64_t *)PMAP_DIRECT_MAP(ptp[ptpindex] & EPT_ADDR_MASK);
 	}
 
 	if ((gpa & ((1UL << ptpshift) - 1)) != 0) {
@@ -223,7 +225,7 @@ ept_free_pd_entry(pd_entry_t pde)
 		return;
 
 	if ((pde & EPT_PG_SUPERPAGE) == 0) {
-		pt = (pt_entry_t *)PHYS_TO_DMAP(pde & EPT_ADDR_MASK);
+		pt = (pt_entry_t *)PMAP_DIRECT_MAP(pde & EPT_ADDR_MASK);
 		for (i = 0; i < NPTEPG; i++)
 			ept_free_pt_entry(pt[i]);
 		free(pt, M_VMX);	/* free the page table page */
@@ -231,7 +233,7 @@ ept_free_pd_entry(pd_entry_t pde)
 }
 
 static void
-ept_free_pdp_entry(pdp_entry_t pdpe)
+ept_free_pdp_entry(pd_entry_t pdpe)
 {
 	pd_entry_t 	*pd;
 	int		 i;
@@ -240,25 +242,25 @@ ept_free_pdp_entry(pdp_entry_t pdpe)
 		return;
 
 	if ((pdpe & EPT_PG_SUPERPAGE) == 0) {
-		pd = (pd_entry_t *)PHYS_TO_DMAP(pdpe & EPT_ADDR_MASK);
-		for (i = 0; i < NPDEPG; i++)
+		pd = (pd_entry_t *)PMAP_DIRECT_MAP(pdpe & EPT_ADDR_MASK);
+		for (i = 0; i < NPDPG; i++)
 			ept_free_pd_entry(pd[i]);
 		free(pd, M_VMX);	/* free the page directory page */
 	}
 }
 
 static void
-ept_free_pml4_entry(pml4_entry_t pml4e)
+ept_free_pml4_entry(pd_entry_t pml4e)
 {
-	pdp_entry_t	*pdp;
+	pd_entry_t	*pdp;
 	int		i;
 
 	if (pml4e == 0)
 		return;
 
 	if ((pml4e & EPT_PG_SUPERPAGE) == 0) {
-		pdp = (pdp_entry_t *)PHYS_TO_DMAP(pml4e & EPT_ADDR_MASK);
-		for (i = 0; i < NPDPEPG; i++)
+		pdp = (pd_entry_t *)PMAP_DIRECT_MAP(pml4e & EPT_ADDR_MASK);
+		for (i = 0; i < NPDPG; i++)
 			ept_free_pdp_entry(pdp[i]);
 		free(pdp, M_VMX);	/* free the page directory ptr page */
 	}
@@ -269,13 +271,13 @@ ept_vmcleanup(struct vmx *vmx)
 {
 	int 		 i;
 
-	for (i = 0; i < NPML4EPG; i++)
+	for (i = 0; i < NTOPLEVEL_PDES; i++)
 		ept_free_pml4_entry(vmx->pml4ept[i]);
 }
 
 int
-ept_vmmmap(void *arg, vm_paddr_t gpa, vm_paddr_t hpa, size_t len,
-	   vm_memattr_t attr, int prot, boolean_t spok)
+ept_vmmmap(void *arg, paddr_t gpa, paddr_t hpa, size_t len,
+	   int /*vm_memattr_t*/ attr, int prot, boolean_t spok)
 {
 	size_t n;
 	struct vmx *vmx = arg;
@@ -292,7 +294,7 @@ ept_vmmmap(void *arg, vm_paddr_t gpa, vm_paddr_t hpa, size_t len,
 }
 
 static void
-invept_single_context(void *arg)
+invept_single_context(void *arg, void *arg2)
 {
 	struct invept_desc desc = *(struct invept_desc *)arg;
 
@@ -302,9 +304,9 @@ invept_single_context(void *arg)
 void
 ept_invalidate_mappings(u_long pml4ept)
 {
-	struct invept_desc invept_desc = { 0 };
+	struct invept_desc invept_desc = { 0, 0 };
 
 	invept_desc.eptp = EPTP(pml4ept);
 
-	smp_rendezvous(NULL, invept_single_context, NULL, &invept_desc);
+	xc_broadcast(XC_HIGHPRI, invept_single_context, &invept_desc, NULL);
 }

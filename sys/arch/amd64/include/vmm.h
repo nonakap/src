@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -46,8 +48,8 @@ typedef void *	(*vmi_init_func_t)(struct vm *vm); /* instance specific apis */
 typedef int	(*vmi_run_func_t)(void *vmi, int vcpu, register_t rip,
 				  struct vm_exit *vmexit);
 typedef void	(*vmi_cleanup_func_t)(void *vmi);
-typedef int	(*vmi_mmap_func_t)(void *vmi, vm_paddr_t gpa, vm_paddr_t hpa,
-				   size_t length, vm_memattr_t attr,
+typedef int	(*vmi_mmap_func_t)(void *vmi, paddr_t gpa, paddr_t hpa,
+				   size_t length, int/*vm_memattr_t*/ attr,
 				   int prot, boolean_t superpages_ok);
 typedef int	(*vmi_get_register_t)(void *vmi, int vcpu, int num,
 				      uint64_t *retval);
@@ -88,11 +90,11 @@ extern struct vmm_ops vmm_ops_amd;
 struct vm *vm_create(const char *name);
 void vm_destroy(struct vm *vm);
 const char *vm_name(struct vm *vm);
-int vm_malloc(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t *ret_hpa);
-int vm_map_mmio(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t hpa);
-int vm_unmap_mmio(struct vm *vm, vm_paddr_t gpa, size_t len);
-vm_paddr_t vm_gpa2hpa(struct vm *vm, vm_paddr_t gpa, size_t size);
-int vm_gpabase2memseg(struct vm *vm, vm_paddr_t gpabase,
+int vm_malloc(struct vm *vm, paddr_t gpa, size_t len, paddr_t *ret_hpa);
+int vm_map_mmio(struct vm *vm, paddr_t gpa, size_t len, paddr_t hpa);
+int vm_unmap_mmio(struct vm *vm, paddr_t gpa, size_t len);
+paddr_t vm_gpa2hpa(struct vm *vm, paddr_t gpa, size_t size);
+int vm_gpabase2memseg(struct vm *vm, paddr_t gpabase,
 	      struct vm_memory_segment *seg);
 int vm_get_register(struct vm *vm, int vcpu, int reg, uint64_t *retval);
 int vm_set_register(struct vm *vm, int vcpu, int reg, uint64_t val);
@@ -130,7 +132,7 @@ int vm_get_run_state(struct vm *vm, int vcpu, int *hostcpu);
 
 void *vcpu_stats(struct vm *vm, int vcpu);
 
-static int __inline
+static __inline int
 vcpu_is_running(struct vm *vm, int vcpu, int *hostcpu)
 {
 	return (vm_get_run_state(vm, vcpu, hostcpu) == VCPU_RUNNING);

@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,23 +29,20 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
 
-#include <vm/vm.h>
-#include <vm/pmap.h>
+#include <uvm/uvm_extern.h>
 
 #include <dev/pci/pcireg.h>
 
 #include <machine/pmap.h>
-#include <machine/vmparam.h>
-#include <machine/pci_cfgreg.h>
 
-#include "io/iommu.h"
+#include <amd64/vmm/io/iommu.h>
 
 /*
  * Documented in the "Intel Virtualization Technology for Directed I/O",

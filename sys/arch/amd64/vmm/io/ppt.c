@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -46,12 +48,10 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/vmm.h>
 #include <machine/vmm_dev.h>
-
-#include "vmm_lapic.h"
-#include "vmm_ktr.h"
-
-#include "iommu.h"
-#include "ppt.h"
+#include <amd64/vmm/vmm_lapic.h>
+#include <amd64/vmm/vmm_ktr.h>
+#include <amd64/vmm/io/iommu.h>
+#include <amd64/vmm/io/ppt.h>
 
 #define	MAX_PPTDEVS	(sizeof(pptdevs) / sizeof(pptdevs[0]))
 #define	MAX_MMIOSEGS	(PCIR_MAX_BAR_0 + 1)

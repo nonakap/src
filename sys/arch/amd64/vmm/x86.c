@@ -1,3 +1,5 @@
+/*	$NetBSD$	*/
+
 /*-
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -27,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/types.h>
 #include <sys/systm.h>
@@ -35,7 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <machine/cpufunc.h>
 #include <machine/specialreg.h>
 
-#include <arch/amd64/vmm/x86.h>
+#include <amd64/vmm/x86.h>
 
 #define	CPUID_VM_HIGH		0x40000000
 
