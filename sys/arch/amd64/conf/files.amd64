@@ -74,7 +74,7 @@ define	bios32
 file	arch/amd64/amd64/bios32.c		bios32 needs-flag
 
 # BHyVe
-include "arch/amd64/conf/files.bhyve"
+include "arch/amd64/conf/files.vmm"
 
 #
 # System bus types
