@@ -253,7 +253,7 @@ probe_bus(pciconf_bus_t *pb)
 			continue;
 
 		bhlcr = pci_conf_read(pb->pc, tag, PCI_BHLC_REG);
-		nfunction = PCI_HDRTYPE_MULTIFN(bhlcr) ? 8 : 1;
+		nfunction = PCI_HDRTYPE_MULTIFN(bhlcr) ? PCI_FUNCTION_MAX : 1;
 		for (function = 0 ; function < nfunction ; function++) {
 			tag = pci_make_tag(pb->pc, pb->busno, device, function);
 			id = pci_conf_read(pb->pc, tag, PCI_ID_REG);
@@ -1099,7 +1099,7 @@ pci_configure_bus(pci_chipset_tag_t pc, struct extent *ioext,
 	pb = kmem_zalloc(sizeof (pciconf_bus_t), KM_NOSLEEP);
 	pb->busno = firstbus;
 	pb->next_busno = pb->busno + 1;
-	pb->last_busno = 255;
+	pb->last_busno = PCI_BUS_MAX;
 	pb->cacheline_size = cacheline_size;
 	pb->parent_bus = NULL;
 	pb->swiz = 0;

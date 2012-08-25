@@ -40,6 +40,9 @@
  * XXX This is not complete.
  */
 
+#define	PCI_BUS_MAX			255
+#define	PCI_FUNCTION_MAX		8
+
 /*
  * Size of each function's configuration space.
  */

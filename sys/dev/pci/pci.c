@@ -573,12 +573,13 @@ pci_enumerate_bus(struct pci_softc *sc, const int *locators,
 
 		if (qd != NULL &&
 		      (qd->quirks & PCI_QUIRK_MULTIFUNCTION) != 0)
-			nfunctions = 8;
+			nfunctions = PCI_FUNCTION_MAX;
 		else if (qd != NULL &&
 		      (qd->quirks & PCI_QUIRK_MONOFUNCTION) != 0)
 			nfunctions = 1;
 		else
-			nfunctions = PCI_HDRTYPE_MULTIFN(bhlcr) ? 8 : 1;
+			nfunctions = PCI_HDRTYPE_MULTIFN(bhlcr) ?
+			    PCI_FUNCTION_MAX : 1;
 
 		for (function = 0; function < nfunctions; function++) {
 			if ((locators[PCICF_FUNCTION] != PCICF_FUNCTION_DEFAULT)
