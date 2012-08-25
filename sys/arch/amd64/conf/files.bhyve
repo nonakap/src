@@ -14,7 +14,7 @@ file	arch/amd64/vmm/vmm_util.c		vmm
 file	arch/amd64/vmm/x86.c			vmm
 file	arch/amd64/vmm/vmm_support.S		vmm
 
-file	arch/amd64/vmm/io/iommu.c		vmm
+#file	arch/amd64/vmm/io/iommu.c		vmm
 #file	arch/amd64/vmm/io/ppt.c			vmm
 file	arch/amd64/vmm/io/vdev.c		vmm
 file	arch/amd64/vmm/io/vlapic.c		vmm
