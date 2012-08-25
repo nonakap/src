@@ -104,7 +104,7 @@ static int
 vmmdev_rw(struct cdev *cdev, struct uio *uio, int flags)
 {
 	int error, off, c;
-	vm_paddr_t hpa, gpa;
+	paddr_t hpa, gpa;
 	struct vmmdev_softc *sc;
 
 	static char zerobuf[PAGE_SIZE];
@@ -127,7 +127,7 @@ vmmdev_rw(struct cdev *cdev, struct uio *uio, int flags)
 		 * read(2) blocks of data to simulate the lseek(2).
 		 */
 		hpa = vm_gpa2hpa(sc->vm, gpa, c);
-		if (hpa == (vm_paddr_t)-1) {
+		if (hpa == (paddr_t)-1) {
 			if (uio->uio_rw == UIO_READ)
 				error = uiomove(zerobuf, c, uio);
 			else
@@ -344,7 +344,7 @@ done:
 }
 
 static int
-vmmdev_mmap(struct cdev *cdev, vm_ooffset_t offset, vm_paddr_t *paddr,
+vmmdev_mmap(struct cdev *cdev, vm_ooffset_t offset, paddr_t *paddr,
     int nprot, vm_memattr_t *memattr)
 {
 	int error;
@@ -355,8 +355,8 @@ vmmdev_mmap(struct cdev *cdev, vm_ooffset_t offset, vm_paddr_t *paddr,
 
 	sc = vmmdev_lookup2(cdev);
 	if (sc != NULL && (nprot & PROT_EXEC) == 0) {
-		*paddr = vm_gpa2hpa(sc->vm, (vm_paddr_t)offset, PAGE_SIZE);
-		if (*paddr != (vm_paddr_t)-1)
+		*paddr = vm_gpa2hpa(sc->vm, (paddr_t)offset, PAGE_SIZE);
+		if (*paddr != (paddr_t)-1)
 			error = 0;
 	}
 

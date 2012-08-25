@@ -33,6 +33,12 @@
 
 #include <sys/kthread.h>
 
+#if 1
+#define	VMM_CTR0(vm, vcpuid, format)			(void)0
+#define	VMM_CTR1(vm, vcpuid, format, p1)		(void)0
+#define	VMM_CTR2(vm, vcpuid, format, p1, p2)		(void)0
+#define	VMM_CTR3(vm, vcpuid, format, p1, p2, p3)	(void)0
+#else
 #define	KTR_VMM	KTR_GEN
 
 #define	VMM_CTR0(vm, vcpuid, format)					\
@@ -49,4 +55,5 @@ CTR5(KTR_VMM, "vm %s-%d(%d): " format, vm_name((vm)), (vcpuid), curcpu, \
 #define	VMM_CTR3(vm, vcpuid, format, p1, p2, p3)			\
 CTR6(KTR_VMM, "vm %s-%d(%d): " format, vm_name((vm)), (vcpuid), curcpu, \
 			(p1), (p2), (p3))
+#endif
 #endif

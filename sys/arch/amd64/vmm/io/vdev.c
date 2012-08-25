@@ -55,7 +55,7 @@ struct vdev_region {
 static SLIST_HEAD(, vdev_region)	 region_head;
 static int 		  		 region_count;
 
-static MALLOC_DEFINE(M_VDEV, "vdev", "vdev");
+MALLOC_DEFINE(M_VDEV, "vdev", "vdev");
 
 #define VDEV_INIT 	(0)
 #define VDEV_RESET	(1)

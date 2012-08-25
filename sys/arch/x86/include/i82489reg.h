@@ -77,6 +77,8 @@
 #define LAPIC_ESR	0x280			/* Err status. R */
 
 #define LAPIC_ICRLO	0x300			/* Int. cmd. RW */
+#	define LAPIC_ICRLO_VEC_MASK	0x000000ff
+
 #	define LAPIC_DLMODE_MASK	0x00000700
 #	define LAPIC_DLMODE_FIXED	0x00000000
 #	define LAPIC_DLMODE_LOW		0x00000100
@@ -114,6 +116,8 @@
 #	define LAPIC_LVTT_DS		0x00001000
 #	define LAPIC_LVTT_M		0x00010000
 #	define LAPIC_LVTT_TM		0x00020000
+#	define  LAPIC_LVTT_TM_ONE_SHOT	0x00000000
+#	define  LAPIC_LVTT_TM_PERIODIC	0x00020000
 
 #define LAPIC_TMINT	0x330			/* Loc.vec (Thermal) */
 #define LAPIC_PCINT	0x340			/* Loc.vec (Perf Mon) */

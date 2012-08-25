@@ -55,13 +55,13 @@ static MALLOC_DEFINE(M_VMM_MEM, "vmm memory", "vmm memory");
 
 /* protected by vmm_mem_mtx */
 static struct {
-	vm_paddr_t	base;
+	paddr_t	base;
 	vm_size_t	length;
 } vmm_mem_avail[VMM_MEM_MAXSEGS];
 
 static int vmm_mem_nsegs;
 
-static vm_paddr_t maxaddr;
+static paddr_t maxaddr;
 
 static struct mtx vmm_mem_mtx;
 
@@ -153,9 +153,9 @@ vmm_mem_steal_memory(void)
 }
 
 static void
-vmm_mem_direct_map(vm_paddr_t start, vm_paddr_t end)
+vmm_mem_direct_map(paddr_t start, paddr_t end)
 {
-	vm_paddr_t addr, remaining;
+	paddr_t addr, remaining;
 	int pdpi, pdi, superpage_size;
 	pml4_entry_t *pml4p;
 	pdp_entry_t *pdp;
@@ -267,7 +267,7 @@ static int
 vmm_mem_populate(void)
 {
 	int seg, error;
-	vm_paddr_t start, end;
+	paddr_t start, end;
 
 	/* populate the vmm_mem_avail[] array */
 	error = vmm_mem_steal_memory();
@@ -306,11 +306,11 @@ vmm_mem_init(void)
 	return (0);
 }
 
-vm_paddr_t
+paddr_t
 vmm_mem_alloc(size_t size)
 {
 	int i;
-	vm_paddr_t addr;
+	paddr_t addr;
 
 	if ((size & PDRMASK) != 0) {
 		panic("vmm_mem_alloc: size 0x%0lx must be "
@@ -342,7 +342,7 @@ vmm_mem_alloc(size_t size)
 }
 
 void
-vmm_mem_free(vm_paddr_t base, size_t length)
+vmm_mem_free(paddr_t base, size_t length)
 {
 	int i;
 
@@ -385,7 +385,7 @@ coalesce_some_more:
 	mtx_unlock(&vmm_mem_mtx);
 }
 
-vm_paddr_t
+paddr_t
 vmm_mem_maxaddr(void)
 {
 
@@ -396,7 +396,7 @@ void
 vmm_mem_dump(void)
 {
 	int i;
-	vm_paddr_t base;
+	paddr_t base;
 	vm_size_t length;
 
 	mtx_lock(&vmm_mem_mtx);

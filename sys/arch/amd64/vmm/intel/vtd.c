@@ -105,7 +105,7 @@ struct domain {
 	int		addrwidth;	/* 'AW' field in context entry */
 	int		spsmask;	/* supported super page sizes */
 	u_int		id;		/* domain id */
-	vm_paddr_t	maxaddr;	/* highest address to be mapped */
+	paddr_t	maxaddr;	/* highest address to be mapped */
 	SLIST_ENTRY(domain) next;
 };
 
@@ -292,7 +292,7 @@ vtd_init(void)
 {
 	int i, units;
 	struct vtdmap *vtdmap;
-	vm_paddr_t ctx_paddr;
+	paddr_t ctx_paddr;
 	
 	for (i = 0; drhd_ident_funcs[i] != NULL; i++) {
 		units = (*drhd_ident_funcs[i])();
@@ -371,7 +371,7 @@ vtd_add_device(void *arg, int bus, int slot, int func)
 	int idx;
 	uint64_t *ctxp;
 	struct domain *dom = arg;
-	vm_paddr_t pt_paddr;
+	paddr_t pt_paddr;
 	struct vtdmap *vtdmap;
 
 	if (bus < 0 || bus > PCI_BUSMAX ||
@@ -444,7 +444,7 @@ vtd_remove_device(void *arg, int bus, int slot, int func)
 }
 
 static uint64_t
-vtd_create_mapping(void *arg, vm_paddr_t gpa, vm_paddr_t hpa, uint64_t len)
+vtd_create_mapping(void *arg, paddr_t gpa, paddr_t hpa, uint64_t len)
 {
 	struct domain *dom;
 	int i, spshift, ptpshift, ptpindex, nlevels;
@@ -523,10 +523,10 @@ vtd_create_mapping(void *arg, vm_paddr_t gpa, vm_paddr_t hpa, uint64_t len)
 }
 
 static void *
-vtd_create_domain(vm_paddr_t maxaddr)
+vtd_create_domain(paddr_t maxaddr)
 {
 	struct domain *dom;
-	vm_paddr_t addr;
+	paddr_t addr;
 	int tmp, i, gaw, agaw, sagaw, res, pt_levels, addrwidth;
 	struct vtdmap *vtdmap;
 

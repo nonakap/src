@@ -35,9 +35,12 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
+#include <sys/kcore.h>
 
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
+
+#include <x86/machdep.h>
 
 #include <amd64/vmm/vmm_util.h>
 #include <amd64/vmm/io/iommu.h>
@@ -125,10 +128,11 @@ IOMMU_DISABLE(void)
 void
 iommu_init(void)
 {
-	int error, bus, slot, func;
+	int b, d, f;
+	device_t dev;
 	paddr_t maxaddr;
 	const char *name;
-	device_t dev;
+	int error;
 
 	if (vmm_is_intel())
 		ops = &iommu_ops_intel;
@@ -157,10 +161,10 @@ iommu_init(void)
 	 */
 	iommu_create_mapping(host_domain, 0, 0, maxaddr);
 
-	for (bus = 0; bus <= PCI_BUSMAX; bus++) {
-		for (slot = 0; slot <= PCI_SLOTMAX; slot++) {
-			for (func = 0; func <= PCI_FUNCMAX; func++) {
-				dev = pci_find_dbsf(0, bus, slot, func);
+	for (b = 0; b < PCI_BUS_MAX; b++) {
+		for (d = 0; d < pci_bus_maxdevs(NULL, b); d++) {
+			for (f = 0; f < PCI_FUNCTION_MAX; f++) {
+				dev = pci_find_dbsf(0, b, d, f);
 				if (dev == NULL)
 					continue;
 
@@ -170,17 +174,17 @@ iommu_init(void)
 					continue;
 
 				/* everything else belongs to the host domain */
-				iommu_add_device(host_domain, bus, slot, func);
+				iommu_add_device(host_domain, b, d, f);
 			}
 		}
 	}
 	IOMMU_ENABLE();
-
 }
 
 void
 iommu_cleanup(void)
 {
+
 	IOMMU_DISABLE();
 	IOMMU_DESTROY_DOMAIN(host_domain);
 	IOMMU_CLEANUP();

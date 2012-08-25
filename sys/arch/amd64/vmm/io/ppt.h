@@ -35,7 +35,7 @@ int	ppt_assign_device(struct vm *vm, int bus, int slot, int func);
 int	ppt_unassign_device(struct vm *vm, int bus, int slot, int func);
 int	ppt_unassign_all(struct vm *vm);
 int	ppt_map_mmio(struct vm *vm, int bus, int slot, int func,
-		     vm_paddr_t gpa, size_t len, vm_paddr_t hpa);
+		     paddr_t gpa, size_t len, paddr_t hpa);
 int	ppt_setup_msi(struct vm *vm, int vcpu, int bus, int slot, int func,
 		      int destcpu, int vector, int numvec);
 int	ppt_setup_msix(struct vm *vm, int vcpu, int bus, int slot, int func,

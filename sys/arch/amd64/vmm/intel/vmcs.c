@@ -28,7 +28,11 @@
  * $FreeBSD$
  */
 
+#ifdef _MODULE
+#define	DDB	/* XXX */
+#else
 #include "opt_ddb.h"
+#endif
 
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");

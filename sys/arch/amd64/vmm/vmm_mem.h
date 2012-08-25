@@ -31,10 +31,10 @@
 #ifndef	_VMM_MEM_H_
 #define	_VMM_MEM_H_
 
-int		vmm_mem_init(void);
-vm_paddr_t	vmm_mem_alloc(size_t size);
-void		vmm_mem_free(vm_paddr_t start, size_t size);
-vm_paddr_t	vmm_mem_maxaddr(void);
-void		vmm_mem_dump(void);
+int	vmm_mem_init(void);
+paddr_t	vmm_mem_alloc(size_t size);
+void	vmm_mem_free(paddr_t start, size_t size);
+paddr_t	vmm_mem_maxaddr(void);
+void	vmm_mem_dump(void);
 
-#endif
+#endif	/* _VMM_MEM_H_ */

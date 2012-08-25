@@ -37,8 +37,8 @@ void	vmmdev_cleanup(void);
 #endif
 
 struct vm_memory_segment {
-	vm_paddr_t	hpa;	/* out */
-	vm_paddr_t	gpa;	/* in */
+	paddr_t		hpa;	/* out */
+	paddr_t		gpa;	/* in */
 	size_t		len;	/* in */
 };
 
@@ -95,8 +95,8 @@ struct vm_pptdev_mmio {
 	int		bus;
 	int		slot;
 	int		func;
-	vm_paddr_t	gpa;
-	vm_paddr_t	hpa;
+	paddr_t		gpa;
+	paddr_t		hpa;
 	size_t		len;
 };
 
@@ -204,4 +204,5 @@ enum {
 	_IOWR('v', IOCNUM_VM_STATS, struct vm_stats)
 #define	VM_STAT_DESC \
 	_IOWR('v', IOCNUM_VM_STAT_DESC, struct vm_stat_desc)
-#endif
+
+#endif	/* _VMM_DEV_H_ */

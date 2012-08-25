@@ -33,6 +33,8 @@
 
 #ifdef _KERNEL
 
+#include <sys/kcpuset.h>
+
 #define	VM_MAX_NAMELEN	32
 
 struct vm;
@@ -113,7 +115,7 @@ struct vlapic *vm_lapic(struct vm *vm, int cpu);
 int vm_get_capability(struct vm *vm, int vcpu, int type, int *val);
 int vm_set_capability(struct vm *vm, int vcpu, int type, int val);
 void vm_activate_cpu(struct vm *vm, int vcpu);
-cpuset_t vm_active_cpus(struct vm *vm);
+kcpuset_t *vm_active_cpus(struct vm *vm);
 
 /*
  * Return 1 if device indicated by bus/slot/func is supposed to be a

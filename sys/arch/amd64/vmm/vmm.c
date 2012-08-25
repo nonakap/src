@@ -42,6 +42,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/proc.h>
 #include <sys/sched.h>
 #include <sys/systm.h>
+#include <sys/module.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -66,7 +67,7 @@ struct vcpu {
 	int		hostcpu;	/* host cpuid this vcpu last ran on */
 	uint64_t	guest_msrs[VMM_MSR_NUM];
 	struct vlapic	*vlapic;
-	int		 vcpuid;
+	int		vcpuid;
 	struct savefpu	*guestfpu;	/* guest fpu state */
 	void		*stats;
 };
@@ -99,7 +100,7 @@ struct vm {
 	 * An active vcpu is one that has been started implicitly (BSP) or
 	 * explicitly (AP) by sending it a startup ipi.
 	 */
-	cpuset_t	active_cpus;
+	kcpuset_t	*active_cpus;
 };
 
 static struct vmm_ops *ops;
@@ -141,8 +142,9 @@ static VMM_STAT_DEFINE(VCPU_TOTAL_RUNTIME, "vcpu total runtime");
 static void
 vcpu_cleanup(struct vcpu *vcpu)
 {
+
 	vlapic_cleanup(vcpu->vlapic);
-	vmm_stat_free(vcpu->stats);	
+	vmm_stat_free(vcpu->stats);
 	fpu_save_area_free(vcpu->guestfpu);
 }
 
@@ -171,7 +173,7 @@ vmm_init(void)
 	error = vmm_mem_init();
 	if (error)
 		return (error);
-	
+
 	if (vmm_is_intel())
 		ops = &vmm_ops_intel;
 	else if (vmm_is_amd())
@@ -184,52 +186,12 @@ vmm_init(void)
 	return (VMM_INIT());
 }
 
-static int
-vmm_handler(module_t mod, int what, void *arg)
-{
-	int error;
-
-	switch (what) {
-	case MOD_LOAD:
-		vmmdev_init();
-		iommu_init();
-		error = vmm_init();
-		break;
-	case MOD_UNLOAD:
-		vmmdev_cleanup();
-		iommu_cleanup();
-		vmm_ipi_cleanup();
-		error = VMM_CLEANUP();
-		break;
-	default:
-		error = 0;
-		break;
-	}
-	return (error);
-}
-
-static moduledata_t vmm_kmod = {
-	"vmm",
-	vmm_handler,
-	NULL
-};
-
-/*
- * Execute the module load handler after the pci passthru driver has had
- * a chance to claim devices. We need this information at the time we do
- * iommu initialization.
- */
-DECLARE_MODULE(vmm, vmm_kmod, SI_SUB_CONFIGURE + 1, SI_ORDER_ANY);
-MODULE_VERSION(vmm, 1);
-
-SYSCTL_NODE(_hw, OID_AUTO, vmm, CTLFLAG_RW, NULL, NULL);
-
 struct vm *
 vm_create(const char *name)
 {
 	int i;
 	struct vm *vm;
-	vm_paddr_t maxaddr;
+	paddr_t maxaddr;
 
 	const int BSP = 0;
 
@@ -240,13 +202,16 @@ vm_create(const char *name)
 	strcpy(vm->name, name);
 	vm->cookie = VMINIT(vm);
 
+	kcpuset_create(&vm->active_cpus, true);
 	for (i = 0; i < VM_MAXCPU; i++) {
 		vcpu_init(vm, i);
 		guest_msrs_init(vm, i);
 	}
 
 	maxaddr = vmm_mem_maxaddr();
+#if 0 /* XXX */
 	vm->iommu = iommu_create_domain(maxaddr);
+#endif
 	vm_activate_cpu(vm, BSP);
 
 	return (vm);
@@ -275,11 +240,12 @@ vm_destroy(struct vm *vm)
 const char *
 vm_name(struct vm *vm)
 {
+
 	return (vm->name);
 }
 
 int
-vm_map_mmio(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t hpa)
+vm_map_mmio(struct vm *vm, paddr_t gpa, size_t len, paddr_t hpa)
 {
 	const boolean_t spok = TRUE;	/* superpage mappings are ok */
 
@@ -288,7 +254,7 @@ vm_map_mmio(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t hpa)
 }
 
 int
-vm_unmap_mmio(struct vm *vm, vm_paddr_t gpa, size_t len)
+vm_unmap_mmio(struct vm *vm, paddr_t gpa, size_t len)
 {
 	const boolean_t spok = TRUE;	/* superpage mappings are ok */
 
@@ -297,10 +263,10 @@ vm_unmap_mmio(struct vm *vm, vm_paddr_t gpa, size_t len)
 }
 
 int
-vm_malloc(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t *ret_hpa)
+vm_malloc(struct vm *vm, paddr_t gpa, size_t len, paddr_t *ret_hpa)
 {
 	int error;
-	vm_paddr_t hpa;
+	paddr_t hpa;
 
 	const boolean_t spok = TRUE;	/* superpage mappings are ok */
 	
@@ -308,7 +274,7 @@ vm_malloc(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t *ret_hpa)
 	 * find the hpa if already it was already vm_malloc'd.
 	 */
 	hpa = vm_gpa2hpa(vm, gpa, len);
-	if (hpa != ((vm_paddr_t)-1))
+	if (hpa != ((paddr_t)-1))
 		goto out;
 
 	if (vm->num_mem_segs >= VM_MAX_MEMORY_SEGMENTS)
@@ -336,11 +302,11 @@ out:
 	return (0);
 }
 
-vm_paddr_t
-vm_gpa2hpa(struct vm *vm, vm_paddr_t gpa, size_t len)
+paddr_t
+vm_gpa2hpa(struct vm *vm, paddr_t gpa, size_t len)
 {
 	int i;
-	vm_paddr_t gpabase, gpalimit, hpabase;
+	paddr_t gpabase, gpalimit, hpabase;
 
 	for (i = 0; i < vm->num_mem_segs; i++) {
 		hpabase = vm->mem_segs[i].hpa;
@@ -349,11 +315,11 @@ vm_gpa2hpa(struct vm *vm, vm_paddr_t gpa, size_t len)
 		if (gpa >= gpabase && gpa + len <= gpalimit)
 			return ((gpa - gpabase) + hpabase);
 	}
-	return ((vm_paddr_t)-1);
+	return ((paddr_t)-1);
 }
 
 int
-vm_gpabase2memseg(struct vm *vm, vm_paddr_t gpabase,
+vm_gpabase2memseg(struct vm *vm, paddr_t gpabase,
 		  struct vm_memory_segment *seg)
 {
 	int i;
@@ -609,12 +575,14 @@ vm_set_capability(struct vm *vm, int vcpu, int type, int val)
 uint64_t *
 vm_guest_msrs(struct vm *vm, int cpu)
 {
+
 	return (vm->vcpu[cpu].guest_msrs);
 }
 
 struct vlapic *
 vm_lapic(struct vm *vm, int cpu)
 {
+
 	return (vm->vcpu[cpu].vlapic);
 }
 
@@ -709,10 +677,10 @@ vm_activate_cpu(struct vm *vm, int vcpuid)
 {
 
 	if (vcpuid >= 0 && vcpuid < VM_MAXCPU)
-		CPU_SET(vcpuid, &vm->active_cpus);
+		kcpuset_set(vcpuid, vm->active_cpus);
 }
 
-cpuset_t
+kcpuset_t
 vm_active_cpus(struct vm *vm)
 {
 
@@ -724,4 +692,29 @@ vcpu_stats(struct vm *vm, int vcpuid)
 {
 
 	return (vm->vcpu[vcpuid].stats);
+}
+
+MODULE(MODULE_CLASS_DRIVER, vmm, NULL);
+
+static int
+vmm_modcmd(modcmd_t cmd, void *priv)
+{
+
+	switch (cmd) {
+	case MODULE_CMD_INIT:
+		vmmdev_init();
+#if 0	/* XXX */
+		iommu_init();
+#endif
+		return vmm_init();
+	case MODULE_CMD_FINI:
+		vmmdev_cleanup();
+#if 0	/* XXX */
+		iommu_cleanup();
+#endif
+		vmm_ipi_cleanup();
+		return VMM_CLEANUP();
+	default:
+		return (ENOTTY);
+	}
 }

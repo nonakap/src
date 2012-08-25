@@ -338,7 +338,7 @@ ppt_unassign_all(struct vm *vm)
 
 int
 ppt_map_mmio(struct vm *vm, int bus, int slot, int func,
-	     vm_paddr_t gpa, size_t len, vm_paddr_t hpa)
+	     paddr_t gpa, size_t len, paddr_t hpa)
 {
 	int i, error;
 	struct vm_memory_segment *seg;

@@ -35,6 +35,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/systm.h>
+#include <sys/atomic.h>
+#include <sys/bitops.h>
+
+#include <machine/i82489reg.h>
 
 #include <machine/vmm.h>
 #include <amd64/vmm/vmm_lapic.h>
@@ -50,38 +54,87 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #define	VLAPIC_CTR_IRR(vlapic, msg)					\
 do {									\
-	uint32_t *irrptr = &(vlapic)->apic.irr0;			\
-	irrptr[0] = irrptr[0];	/* silence compiler */			\
-	VLAPIC_CTR1((vlapic), msg " irr0 0x%08x", irrptr[0 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " irr1 0x%08x", irrptr[1 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " irr2 0x%08x", irrptr[2 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " irr3 0x%08x", irrptr[3 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " irr4 0x%08x", irrptr[4 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " irr5 0x%08x", irrptr[5 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " irr6 0x%08x", irrptr[6 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " irr7 0x%08x", irrptr[7 << 2]);	\
-} while (0)
+	uint32_t *lirrptr = &(vlapic)->apic.irr0;			\
+	lirrptr[0] = lirrptr[0];	/* silence compiler */		\
+	VLAPIC_CTR1((vlapic), msg " irr0 0x%08x", lirrptr[0 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr1 0x%08x", lirrptr[1 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr2 0x%08x", lirrptr[2 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr3 0x%08x", lirrptr[3 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr4 0x%08x", lirrptr[4 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr5 0x%08x", lirrptr[5 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr6 0x%08x", lirrptr[6 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr7 0x%08x", lirrptr[7 << 2]);	\
+} while (/*CONSTCOND*/0)
 
 #define	VLAPIC_CTR_ISR(vlapic, msg)					\
 do {									\
-	uint32_t *isrptr = &(vlapic)->apic.isr0;			\
-	isrptr[0] = isrptr[0];	/* silence compiler */			\
-	VLAPIC_CTR1((vlapic), msg " isr0 0x%08x", isrptr[0 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " isr1 0x%08x", isrptr[1 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " isr2 0x%08x", isrptr[2 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " isr3 0x%08x", isrptr[3 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " isr4 0x%08x", isrptr[4 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " isr5 0x%08x", isrptr[5 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " isr6 0x%08x", isrptr[6 << 2]);	\
-	VLAPIC_CTR1((vlapic), msg " isr7 0x%08x", isrptr[7 << 2]);	\
-} while (0)
+	uint32_t *lisrptr = &(vlapic)->apic.isr0;			\
+	lisrptr[0] = lisrptr[0];	/* silence compiler */		\
+	VLAPIC_CTR1((vlapic), msg " isr0 0x%08x", lisrptr[0 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr1 0x%08x", lisrptr[1 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr2 0x%08x", lisrptr[2 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr3 0x%08x", lisrptr[3 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr4 0x%08x", lisrptr[4 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr5 0x%08x", lisrptr[5 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr6 0x%08x", lisrptr[6 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr7 0x%08x", lisrptr[7 << 2]);	\
+} while (/*CONSTCOND*/0)
 
-static MALLOC_DEFINE(M_VLAPIC, "vlapic", "vlapic");
+MALLOC_DEFINE(M_VLAPIC, "vlapic", "vlapic");
 
 #define	PRIO(x)			((x) >> 4)
 
 #define VLAPIC_VERSION		(16)
 #define VLAPIC_MAXLVT_ENTRIES	(5)
+
+struct LAPIC {
+	uint32_t id;
+	uint32_t version;
+	uint32_t tpr;
+	uint32_t apr;
+	uint32_t ppr;
+	uint32_t eoi;
+	uint32_t ldr;
+	uint32_t dfr;
+	uint32_t svr;
+	uint32_t isr0;
+	uint32_t isr1;
+	uint32_t isr2;
+	uint32_t isr3;
+	uint32_t isr4;
+	uint32_t isr5;
+	uint32_t isr6;
+	uint32_t isr7;
+	uint32_t tmr0;
+	uint32_t tmr1;
+	uint32_t tmr2;
+	uint32_t tmr3;
+	uint32_t tmr4;
+	uint32_t tmr5;
+	uint32_t tmr6;
+	uint32_t tmr7;
+	uint32_t irr0;
+	uint32_t irr1;
+	uint32_t irr2;
+	uint32_t irr3;
+	uint32_t irr4;
+	uint32_t irr5;
+	uint32_t irr6;
+	uint32_t irr7;
+	uint32_t esr;
+	uint32_t lvt_cmci;
+	uint32_t icr_lo;
+	uint32_t icr_hi;
+	uint32_t lvt_timer;
+	uint32_t lvt_thermal;
+	uint32_t lvt_pcint;
+	uint32_t lvt_lint0;
+	uint32_t lvt_lint1;
+	uint32_t lvt_error;
+	uint32_t icr_timer;
+	uint32_t ccr_timer;
+	uint32_t dcr_timer;
+};
 
 struct vlapic {
 	struct vm		*vm;
@@ -106,12 +159,20 @@ struct vlapic {
 	int			 isrvec_stk_top;
 };
 
+static __inline uint32_t
+atomic_load_acq_32(volatile uint32_t *p)
+{
+	uint32_t tmp = *p;
+	__asm __volatile("" ::: "memory");
+	return (tmp);
+}
+
 static void
 vlapic_mask_lvts(uint32_t *lvts, int num_lvt)
 {
 	int i;
 	for (i = 0; i < num_lvt; i++) {
-		*lvts |= APIC_LVT_M;
+		*lvts |= LAPIC_LVTT_M;
 		lvts += 4;
 	}
 }
@@ -145,9 +206,9 @@ vlapic_init_ipi(struct vlapic *vlapic)
 {
 	struct LAPIC    *lapic = &vlapic->apic;
 	lapic->version = VLAPIC_VERSION;
-	lapic->version |= (VLAPIC_MAXLVT_ENTRIES < MAXLVTSHIFT);
+	lapic->version |= (VLAPIC_MAXLVT_ENTRIES < LAPIC_VERSION_LVT_SHIFT);
 	lapic->dfr = 0xffffffff;
-	lapic->svr = APIC_SVR_VECTOR;
+	lapic->svr = LAPIC_SVR_VECTOR_MASK;
 	vlapic_mask_lvts(&lapic->lvt_timer, VLAPIC_MAXLVT_ENTRIES+1);
 }
 
@@ -195,30 +256,32 @@ vlapic_set_intr_ready(struct vlapic *vlapic, int vector)
 
 	idx = (vector / 32) * 4;
 	irrptr = &lapic->irr0;
-	atomic_set_int(&irrptr[idx], 1 << (vector % 32));
+	atomic_or_32(&irrptr[idx], 1 << (vector % 32));
 	VLAPIC_CTR_IRR(vlapic, "vlapic_set_intr_ready");
 }
 
+extern uint64_t tsc_freq;
 #define VLAPIC_BUS_FREQ	tsc_freq
 #define VLAPIC_DCR(x)	((x->dcr_timer & 0x8) >> 1)|(x->dcr_timer & 0x3)
 
 static int
 vlapic_timer_divisor(uint32_t dcr)
 {
-	switch (dcr & 0xB) {
-	case APIC_TDCR_2:
+
+	switch (dcr & 0xb) {
+	case LAPIC_DCRT_DIV2:
 		return (2);
-	case APIC_TDCR_4:
+	case LAPIC_DCRT_DIV4:
 		return (4);
-	case APIC_TDCR_8:
+	case LAPIC_DCRT_DIV8:
 		return (8);
-	case APIC_TDCR_16:
+	case LAPIC_DCRT_DIV16:
 		return (16);
-	case APIC_TDCR_32:
+	case LAPIC_DCRT_DIV32:
 		return (32);
-	case APIC_TDCR_64:
+	case LAPIC_DCRT_DIV64:
 		return (64);
-	case APIC_TDCR_128:
+	case LAPIC_DCRT_DIV128:
 		return (128);
 	default:
 		panic("vlapic_timer_divisor: invalid dcr 0x%08x", dcr);
@@ -232,7 +295,7 @@ vlapic_start_timer(struct vlapic *vlapic, uint32_t elapsed)
 
 	icr_timer = vlapic->apic.icr_timer;
 
-	vlapic->ccr_ticks = ticks;
+	vlapic->ccr_ticks = hardclock_ticks;
 	if (elapsed < icr_timer)
 		vlapic->apic.ccr_timer = icr_timer - elapsed;
 	else {
@@ -360,7 +423,7 @@ vlapic_process_eoi(struct vlapic *vlapic)
 	 */
 	for (i = 7; i > 0; i--) {
 		idx = i * 4;
-		bitpos = fls(isrptr[idx]);
+		bitpos = fls32(isrptr[idx]);
 		if (bitpos != 0) {
 			if (vlapic->isrvec_stk_top <= 0) {
 				panic("invalid vlapic isrvec_stk_top %d",
@@ -388,7 +451,7 @@ vlapic_periodic_timer(struct vlapic *vlapic)
 	
 	lvt = vlapic_get_lvt(vlapic, APIC_OFFSET_TIMER_LVT);
 
-	return (vlapic_get_lvt_field(lvt, APIC_LVTT_TM_PERIODIC));
+	return (vlapic_get_lvt_field(lvt, LAPIC_LVTT_TM_PERIODIC));
 }
 
 static void
@@ -399,8 +462,8 @@ vlapic_fire_timer(struct vlapic *vlapic)
 	
 	lvt = vlapic_get_lvt(vlapic, APIC_OFFSET_TIMER_LVT);
 
-	if (!vlapic_get_lvt_field(lvt, APIC_LVTT_M)) {
-		vector = vlapic_get_lvt_field(lvt,APIC_LVTT_VECTOR);
+	if (!vlapic_get_lvt_field(lvt, LAPIC_LVTT_M)) {
+		vector = vlapic_get_lvt_field(lvt, LAPIC_LVTT_VEC_MASK);
 		vlapic_set_intr_ready(vlapic, vector);
 	}
 }
@@ -408,39 +471,47 @@ vlapic_fire_timer(struct vlapic *vlapic)
 static int
 lapic_process_icr(struct vlapic *vlapic, uint64_t icrval)
 {
-	int i;
-	cpuset_t dmask;
+	kcpuset_t *dmask;
 	uint32_t dest, vec, mode;
-	
-	dest = icrval >> 32;
-	vec = icrval & APIC_VECTOR_MASK;
-	mode = icrval & APIC_DELMODE_MASK;
+	int i;
 
-	if (mode == APIC_DELMODE_FIXED || mode == APIC_DELMODE_NMI) {
-		switch (icrval & APIC_DEST_MASK) {
-		case APIC_DEST_DESTFLD:
-			CPU_SETOF(dest, &dmask);
+	dest = icrval >> 32;
+	vec = icrval & LAPIC_ICRLO_VEC_MASK;
+	mode = icrval & LAPIC_DLMODE_MASK;
+
+	if (mode == LAPIC_DLMODE_FIXED || mode == LAPIC_DLMODE_NMI) {
+		switch (icrval & LAPIC_DEST_MASK) {
+		case LAPIC_DEST_DEFAULT:
+			kcpuset_create(&dmask, true);
+			kcpuset_set(dmask, dest);
 			break;
-		case APIC_DEST_SELF:
-			CPU_SETOF(vlapic->vcpuid, &dmask);
+		case LAPIC_DEST_SELF:
+			kcpuset_create(&dmask, true);
+			kcpuset_set(dmask, vlapic->vcpuid);
 			break;
-		case APIC_DEST_ALLISELF:
+		case LAPIC_DEST_ALLINCL:
 			dmask = vm_active_cpus(vlapic->vm);
+			kcpuset_use(dmask);
 			break;
-		case APIC_DEST_ALLESELF:
+		case LAPIC_DEST_ALLEXCL:
 			dmask = vm_active_cpus(vlapic->vm);
-			CPU_CLR(vlapic->vcpuid, &dmask);
+			kcpuset_use(dmask);
+			kcpuset_clear(dmask, vlapic->vcpuid);
 			break;
 		}
 
-		while ((i = cpusetobj_ffs(&dmask)) != 0) {
-			i--;
-			CPU_CLR(i, &dmask);
-			if (mode == APIC_DELMODE_FIXED)
+		for (i = 0; i < MAXCPUS; i++) {
+			if (!kcpuset_isset(dmask, i))
+				continue;
+
+			kcpuset_clear(dmask, i);
+			if (mode == LAPIC_DLMODE_FIXED)
 				lapic_set_intr(vlapic->vm, i, vec);
 			else
 				vm_inject_nmi(vlapic->vm, i);
 		}
+
+		kcpuset_unuse(dmask, NULL);
 
 		return (0);	/* handled completely in the kernel */
 	}
@@ -448,7 +519,7 @@ lapic_process_icr(struct vlapic *vlapic, uint64_t icrval)
 	/*
 	 * XXX this assumes that the startup IPI always succeeds
 	 */
-	if (mode == APIC_DELMODE_STARTUP)
+	if (mode == LAPIC_DLMODE_STARTUP)
 		vm_activate_cpu(vlapic->vm, dest);
 
 	/*
@@ -472,8 +543,8 @@ vlapic_pending_intr(struct vlapic *vlapic)
 	 */
 	for (i = 7; i > 0; i--) {
 		idx = i * 4;
-		val = atomic_load_acq_int(&irrptr[idx]);
-		bitpos = fls(val);
+		val = atomic_load_acq_32(&irrptr[idx]);
+		bitpos = fls32(val);
 		if (bitpos != 0) {
 			vector = i * 32 + (bitpos - 1);
 			if (PRIO(vector) > PRIO(lapic->ppr)) {
@@ -501,7 +572,7 @@ vlapic_intr_accepted(struct vlapic *vlapic, int vector)
 	idx = (vector / 32) * 4;
 
 	irrptr = &lapic->irr0;
-	atomic_clear_int(&irrptr[idx], 1 << (vector % 32));
+	atomic_and_32(&irrptr[idx], ~(1 << (vector % 32)));
 	VLAPIC_CTR_IRR(vlapic, "vlapic_intr_accepted");
 
 	isrptr = &lapic->isr0;
@@ -578,7 +649,7 @@ vlapic_op_mem_read(void* dev, uint64_t gpa, opsize_t size, uint64_t *data)
 		case APIC_OFFSET_IRR0 ... APIC_OFFSET_IRR7:
 			i = (offset - APIC_OFFSET_IRR0) >> 2;
 			reg = &lapic->irr0;
-			*data = atomic_load_acq_int(reg + i);
+			*data = atomic_load_acq_32(reg + i);
 			break;
 		case APIC_OFFSET_ESR:
 			*data = lapic->esr;
@@ -649,8 +720,8 @@ vlapic_op_mem_write(void* dev, uint64_t gpa, opsize_t size, uint64_t data)
 			break;
 		case APIC_OFFSET_TIMER_LVT ... APIC_OFFSET_ERROR_LVT:
 			reg = vlapic_get_lvt(vlapic, offset);	
-			if (!(lapic->svr & APIC_SVR_ENABLE)) {
-				data |= APIC_LVT_M;
+			if (!(lapic->svr & LAPIC_SVR_ENABLE)) {
+				data |= LAPIC_LVTT_M;
 			}
 			*reg = data;
 			// vlapic_dump_lvt(offset, reg);
@@ -691,7 +762,7 @@ vlapic_timer_tick(struct vlapic *vlapic)
 	uint32_t ccr;
 	uint32_t decrement, remainder;
 
-	curticks = ticks;
+	curticks = hardclock_ticks;
 
 	/* Common case */
 	delta = curticks - vlapic->ccr_ticks;
@@ -760,7 +831,7 @@ vlapic_init(struct vm *vm, int vcpuid)
 	vlapic->ops = &vlapic_dev_ops;
 
 	vlapic->mmio = vlapic_mmio + vcpuid;
-	vlapic->mmio->base = DEFAULT_APIC_BASE;
+	vlapic->mmio->base = LAPIC_BASE;
 	vlapic->mmio->len = PAGE_SIZE;
 	vlapic->mmio->attr = MMIO_READ|MMIO_WRITE;
 	vlapic->mmio->vcpu = vcpuid;
