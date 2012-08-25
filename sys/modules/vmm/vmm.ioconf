@@ -1,0 +1,11 @@
+# $NetBSD$
+
+ioconf vmm
+
+include "conf/files"
+include "arch/amd64/conf/files.amd64"
+include "arch/amd64/conf/files.bhyve"
+
+pseudo-root vmmbus*
+
+vmm0 at vmmbus?
