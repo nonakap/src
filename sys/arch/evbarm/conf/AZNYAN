@@ -1,0 +1,57 @@
+# $NetBSD$
+#
+# AZNYAN -- TOSHIBA dynabook AZ (AC100) Kernel
+#
+
+include	"arch/evbarm/conf/std.aznyan"
+
+maxusers	32
+options 	RTC_OFFSET=0	# hardware clock is this many mins. west of GMT
+
+#options 	MULTIPROCESSOR
+options 	CPU_CORTEXA9
+options 	TEGRA2
+
+file-system	FFS
+file-system	MFS
+
+options 	INET
+options 	NFS_BOOT_DHCP
+
+options 	COMPAT_43
+
+options 	DKWEDGE_AUTODISCOVER
+options 	DKWEDGE_METHOD_GPT
+
+options 	DIAGNOSTIC
+options 	DEBUG
+options 	LOCKDEBUG
+options 	VERBOSE_INIT_ARM
+
+options 	DDB
+options		DDB_ONPANIC=1
+options 	DDB_HISTORY_SIZE=100
+options 	DDB_COMMANDONENTER="t; show event"
+
+makeoptions	DEBUG="-g"
+options 	SYMTAB_SPACE=530000
+
+config		netbsd		root on ? type ?
+
+mainbus0	at root
+cpu0		at mainbus?
+armperiph0	at mainbus?		# A9 On-Chip Peripherals
+armgic0		at armperiph?		# ARM Generic Interrupt Controller
+arml2cc0	at armperiph?		# ARM PL310 L2CC
+a9tmr0		at armperiph?		# A9 Global Timer
+a9wdt0		at armperiph? flags 1	# A9 Watchdog Timer
+
+nvsoc0		at mainbus?
+options 	CONADDR=0x70006000,CONSPEED=115200
+com0		at nvsoc?
+
+pseudo-device	bpfilter		# Berkeley packet filter
+pseudo-device	loop			# network loopback
+pseudo-device	pty			# pseudo-terminals
+pseudo-device	ksyms			# /dev/ksyms
+pseudo-device	drvctl			# device control

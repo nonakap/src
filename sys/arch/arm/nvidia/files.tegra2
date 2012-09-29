@@ -1,0 +1,22 @@
+# $NetBSD$
+# 
+# Configuration info for nVIDIA Tegra2 ARM Peripherals
+#
+
+include "arch/arm/pic/files.pic"
+include "arch/arm/cortex/files.cortex"
+
+file	arch/arm/arm32/arm32_boot.c
+file	arch/arm/arm32/arm32_kvminit.c
+file	arch/arm/arm32/arm32_reboot.c
+file	arch/arm/arm32/irq_dispatch.S
+
+device	nvsoc { [unit = -1], [offset = -1], [irq = -1] } : bus_space_generic, pic, pic_splfuncs
+attach	nvsoc at mainbus
+file	arch/arm/nvidia/nvsoc.c			nvsoc
+file	arch/arm/nvidia/nvsoc_space.c
+file	arch/arm/nvidia/nvsoc_dma.c
+
+defflag opt_nvsoc.h				TEGRA TEGRA2 TEGRA3
+file	arch/arm/nvidia/nvsoc_intr.c
+file	arch/arm/nvidia/tegra2.c		tegra2
