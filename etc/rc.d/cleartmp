@@ -45,6 +45,25 @@ cleartmp_start()
 	(cd ${tmp_dir} &&
 	    find -x . ! -name . ! -name lost+found ! -name quota.user \
 		! -name quota.group -exec rm -rf -- {} \+ -type d -prune)
+
+	if checkyesno per_user_tmp && [ -d ${per_user_tmp_dir} ]; then
+		# Create user tmp directory.
+		if [ ! -d ${per_user_tmp_dir}/0 ]; then
+			/bin/mkdir ${per_user_tmp_dir}/0
+			/usr/sbin/chown root:wheel ${per_user_tmp_dir}/0
+			/bin/chmod 1700 ${per_user_tmp_dir}/0
+		fi
+		if [ -n "${per_user_tmp_prepare_users}" ]; then
+			for user in ${per_user_tmp_prepare_users}; do
+				uid=$(/usr/bin/id -u ${user})
+				if [ $? -eq 0 ] && [ ! -d ${per_user_tmp_dir}/${uid} ]; then
+					/bin/mkdir ${per_user_tmp_dir}/${uid}
+					/usr/sbin/chown ${user}:$(/usr/bin/id -gn ${user}) ${per_user_tmp_dir}/${uid}
+					/bin/chmod 1700 ${per_user_tmp_dir}/${uid}
+				fi
+			done
+		fi
+	fi
 }
 
 load_rc_config $name

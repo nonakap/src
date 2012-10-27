@@ -6,13 +6,14 @@
 # PROVIDE: perusertmp
 # REQUIRE: mountall
 # BEFORE:  cleartmp
+# KEYWORD: shutdown
 
 $_rc_subr_loaded . /etc/rc.subr
 
 name="perusertmp"
 rcvar="per_user_tmp"
 start_cmd="perusertmp_start"
-stop_cmd=":"
+stop_cmd="perusertmp_stop"
 
 perusertmp_start()
 {
@@ -43,6 +44,41 @@ perusertmp_start()
 	if [ "$(/usr/bin/readlink /tmp)" != ${per_user_tmp_dir}/@ruid ]; then
 		/bin/rm -rf /tmp
 		/bin/ln -s ${per_user_tmp_dir}/@ruid /tmp
+	fi
+
+	if ! checkyesno clear_tmp; then
+		# Create user tmp directory.
+		if [ ! -d ${per_user_tmp_dir}/0 ]; then
+			/bin/mkdir ${per_user_tmp_dir}/0
+			/usr/sbin/chown root:wheel ${per_user_tmp_dir}/0
+			/bin/chmod 1700 ${per_user_tmp_dir}/0
+		fi
+		if [ -n "${per_user_tmp_prepare_users}" ]; then
+			for user in ${per_user_tmp_prepare_users}; do
+				uid=$(/usr/bin/id -u ${user})
+				if [ $? -eq 0 ] && [ ! -d ${per_user_tmp_dir}/${uid} ]; then
+					/bin/mkdir ${per_user_tmp_dir}/${uid}
+					/usr/sbin/chown ${user}:$(/usr/bin/id -gn ${user}) ${per_user_tmp_dir}/${uid}
+					/bin/chmod 1700 ${per_user_tmp_dir}/${uid}
+				fi
+			done
+		fi
+	fi
+}
+
+perusertmp_stop()
+{
+	if [ -d "${per_user_tmp_dir}" ]; then
+		mount_point=$(cd ${per_user_tmp_dir} && /bin/df . | /usr/bin/tail -1 | /usr/bin/awk '{print $6}')
+		mount_fs=$(cd ${per_user_tmp_dir} && /bin/df . | /usr/bin/tail -1 | /usr/bin/awk '{print $1}')
+		if [ "${mount_point}" = "${per_user_tmp_dir}" ] && ( [ "${mount_fs}" = "tmpfs" ] || [ ${mount_fs} = "mfs" ] ); then
+			if [ "$(/usr/bin/readlink /tmp)" = ${per_user_tmp_dir}/@ruid ]; then
+				/bin/rm -f /tmp
+				/bin/mkdir /tmp
+				/usr/sbin/chown root:wheel /tmp
+				/bin/chmod 1777 /tmp
+			fi
+		fi
 	fi
 }
 

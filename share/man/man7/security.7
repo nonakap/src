@@ -393,6 +393,12 @@ entry to use
 keyword) instead of
 .Dq /tmp .
 .Pp
+If you want to create a temporary directory of the user on startup,
+described a list of users to
+.Dq per_user_tmp_prepare_users
+.Xr rc.conf 5
+keyword .
+.Pp
 Following that, run:
 .Bd -literal -offset indent
 # /etc/rc.d/perusertmp start
