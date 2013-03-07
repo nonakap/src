@@ -187,7 +187,7 @@ msdosfs_lookup(void *v)
 		goto foundroot;
 	}
 
-	error = newwinfn(cnp, &fn, pmp);
+	error = newwinfn(cnp->cn_nameptr, cnp->cn_namelen, &fn, pmp);
 	if (error)
 		goto error;
 

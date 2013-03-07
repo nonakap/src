@@ -125,7 +125,7 @@ msdosfs_times(struct msdosfsmount *pmp, struct denode *dep,
  * memory denode's will be in synch.
  */
 static int
-msdosfs_findslot(struct denode *dp, struct componentname *cnp) 
+msdosfs_findslot(struct denode *dp, struct msdosfs_winfn *fn) 
 {
 	daddr_t bn;
 	int error;
@@ -147,20 +147,17 @@ msdosfs_findslot(struct denode *dp, struct componentname *cnp)
 
 	pmp = dp->de_pmp;
 
-	switch (unix2dosfn((const u_char *)cnp->cn_nameptr, dosfilename,
-	    cnp->cn_namelen, 0)) {
+	switch (unix2dosfn(fn, dosfilename, 0, pmp)) {
 	case 0:
 		return (EINVAL);
 	case 1:
 		break;
 	case 2:
-		wincnt = winSlotCnt((const u_char *)cnp->cn_nameptr,
-		    cnp->cn_namelen) + 1;
+		wincnt = winSlotCnt(fn, pmp) + 1;
 		break;
 	case 3:
 		olddos = 0;
-		wincnt = winSlotCnt((const u_char *)cnp->cn_nameptr,
-		    cnp->cn_namelen) + 1;
+		wincnt = winSlotCnt(fn, pmp) + 1;
 		break;
 	}
 
@@ -242,10 +239,7 @@ msdosfs_findslot(struct denode *dp, struct componentname *cnp)
 					if (pmp->pm_flags & MSDOSFSMNT_SHORTNAME)
 						continue;
 
-					chksum = winChkName((const u_char *)cnp->cn_nameptr,
-							    cnp->cn_namelen,
-							    (struct winentry *)dep,
-							    chksum);
+					chksum = winChkName(fn, (struct winentry *)dep, chksum, pmp);
 					continue;
 				}
 
@@ -277,7 +271,7 @@ msdosfs_findslot(struct denode *dp, struct componentname *cnp)
 				dp->de_fndoffset = diroff;
 				dp->de_fndcnt = 0;
 
-				return EEXIST;
+				return (EEXIST);
 			}
 		}	/* for (blkoff = 0; .... */
 		/*
@@ -330,7 +324,7 @@ notfound:
 	 * NB - if the directory is unlocked, then this
 	 * information cannot be used.
 	 */
-	return 0;
+	return (0);
 }
 
 /*
@@ -340,15 +334,12 @@ notfound:
 struct denode *
 msdosfs_mkfile(const char *path, struct denode *pdep, fsnode *node)
 {
-	struct componentname cn;
 	struct denode ndirent;
 	struct denode *dep;
 	int error;
 	struct stat *st = &node->inode->st;
 	struct msdosfsmount *pmp = pdep->de_pmp;
-
-	cn.cn_nameptr = node->name;
-	cn.cn_namelen = strlen(node->name);
+	struct msdosfs_winfn *fn = NULL;
 
 	DPRINTF(("%s(name %s, mode 0%o size %zu)\n", __func__, node->name,
 	    st->st_mode, (size_t)st->st_size));
@@ -370,8 +361,10 @@ msdosfs_mkfile(const char *path, struct denode *pdep, fsnode *node)
 	 * use the absence of the owner write bit to make the file
 	 * readonly.
 	 */
+	if ((error = newwinfn(node->name, strlen(node->name), &fn, pmp)) != 0)
+		goto bad;
 	memset(&ndirent, 0, sizeof(ndirent));
-	if ((error = uniqdosname(pdep, &cn, ndirent.de_Name)) != 0)
+	if ((error = uniqdosname(pdep, fn, ndirent.de_Name)) != 0)
 		goto bad;
 
 	ndirent.de_Attributes = (st->st_mode & S_IWUSR) ?
@@ -383,15 +376,18 @@ msdosfs_mkfile(const char *path, struct denode *pdep, fsnode *node)
 	ndirent.de_pmp = pdep->de_pmp;
 	ndirent.de_flag = DE_ACCESS | DE_CREATE | DE_UPDATE;
 	msdosfs_times(pmp, &ndirent, st);
-	if ((error = msdosfs_findslot(pdep, &cn)) != 0)
+	if ((error = msdosfs_findslot(pdep, fn)) != 0)
 		goto bad;
-	if ((error = createde(&ndirent, pdep, &dep, &cn)) != 0)
+	if ((error = createde(&ndirent, pdep, &dep, fn)) != 0)
 		goto bad;
 	if ((error = msdosfs_wfile(path, dep, node)) != 0)
 		goto bad;
+	freewinfn(fn, pmp);
 	return dep;
 
 bad:
+	if (fn != NULL)
+		freewinfn(fn, pmp);
 	errno = error;
 	return NULL;
 }
@@ -533,7 +529,6 @@ struct denode *
 msdosfs_mkdire(const char *path, struct denode *pdep, fsnode *node) {
 	struct denode ndirent;
 	struct denode *dep;
-	struct componentname cn;
 	struct stat *st = &node->inode->st;
 	struct msdosfsmount *pmp = pdep->de_pmp;
 	int error;
@@ -541,9 +536,8 @@ msdosfs_mkdire(const char *path, struct denode *pdep, fsnode *node) {
 	daddr_t lbn;
 	struct direntry *denp;
 	struct buf *bp;
+	struct msdosfs_winfn *fn = NULL;
 
-	cn.cn_nameptr = node->name;
-	cn.cn_namelen = strlen(node->name);
 	/*
 	 * If this is the root directory and there is no space left we
 	 * can't do anything.  This is because the root directory can not
@@ -616,7 +610,9 @@ msdosfs_mkdire(const char *path, struct denode *pdep, fsnode *node) {
 	 * cluster.  This will be written to an empty slot in the parent
 	 * directory.
 	 */
-	if ((error = uniqdosname(pdep, &cn, ndirent.de_Name)) != 0)
+	if ((error = newwinfn(node->name, strlen(node->name), &fn, pmp)) != 0)
+		goto bad;
+	if ((error = uniqdosname(pdep, fn, ndirent.de_Name)) != 0)
 		goto bad;
 
 	ndirent.de_Attributes = ATTR_DIRECTORY;
@@ -625,15 +621,18 @@ msdosfs_mkdire(const char *path, struct denode *pdep, fsnode *node) {
 	ndirent.de_dev = pdep->de_dev;
 	ndirent.de_devvp = pdep->de_devvp;
 	ndirent.de_pmp = pdep->de_pmp;
-	if ((error = msdosfs_findslot(pdep, &cn)) != 0)
+	if ((error = msdosfs_findslot(pdep, fn)) != 0)
 		goto bad;
-	if ((error = createde(&ndirent, pdep, &dep, &cn)) != 0)
+	if ((error = createde(&ndirent, pdep, &dep, fn)) != 0)
 		goto bad;
 	if ((error = msdosfs_updatede(dep)) != 0)
 		goto bad;
+	freewinfn(fn, pmp);
 	return dep;
 
 bad:
+	if (fn != NULL)
+		freewinfn(fn, pmp);
 	clusterfree(pmp, newcluster, NULL);
 bad2:
 	errno = error;

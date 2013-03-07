@@ -302,7 +302,7 @@ int msdosfs_update(struct vnode *, const struct timespec *,
 	    const struct timespec *, int);
 int createde(struct denode *, struct denode *,
 		struct denode **, struct msdosfs_winfn *);
-int deextend(struct denode *, u_long, kauth_cred_t);
+int deextend(struct denode *, u_long, struct kauth_cred *);
 int deget(struct msdosfsmount *, u_long, u_long, struct denode **);
 int detrunc(struct denode *, u_long, int, struct kauth_cred *);
 int deupdat(struct denode *, int);

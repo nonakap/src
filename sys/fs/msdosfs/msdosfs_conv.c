@@ -68,10 +68,18 @@ __KERNEL_RCSID(0, "$NetBSD: msdosfs_conv.c,v 1.9 2013/01/26 16:51:51 christos Ex
 #include <sys/namei.h>
 #if !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
 #include <sys/kiconv.h>
+#endif
+#define	MSDOSFSTMP_MALLOC(s)	malloc((s), M_MSDOSFSTMP, M_WAITOK)
+#define	MSDOSFSTMP_FREE(p)	free((p), M_MSDOSFSTMP)
 #else
 #include <stdio.h>
+#include <stdlib.h>
 #include <dirent.h>
+#include <errno.h>
 #include <sys/queue.h>
+#include <sys/namei.h>
+#define	MSDOSFSTMP_MALLOC(s)	malloc((s))
+#define	MSDOSFSTMP_FREE(p)	free((p))
 #endif
 
 /*
@@ -1251,7 +1259,7 @@ error:
 }
 
 static int
-newwinfn_kiconv(struct componentname *cnp, struct msdosfs_winfn **fnp,
+newwinfn_kiconv(const char *name, size_t len, struct msdosfs_winfn **fnp,
     struct msdosfsmount *pmp)
 {
 	struct msdosfs_kiconv *fcp = pmp->pm_kiconvcookie;
@@ -1275,8 +1283,8 @@ newwinfn_kiconv(struct componentname *cnp, struct msdosfs_winfn **fnp,
 	/*
 	 * convert from iocharset to default encoding.
 	 */
-	src = (const u_char *)cnp->cn_nameptr;
-	szsrc = cnp->cn_namelen;
+	src = (const u_char *)name;
+	szsrc = len;
 	dst = tmptop = PNBUF_GET();
 	KASSERT(tmptop != NULL);
 	szdst = PATH_MAX;
@@ -1430,8 +1438,8 @@ newwinfn_kiconv(struct componentname *cnp, struct msdosfs_winfn **fnp,
 	PNBUF_PUT(tmptop);
 
 	fn = malloc(sizeof(*fn), M_MSDOSFSTMP, M_WAITOK);
-	fn->un = (const u_char *)cnp->cn_nameptr;
-	fn->unlen = cnp->cn_namelen;
+	fn->un = (const u_char *)name;
+	fn->unlen = len;
 	fn->wn = wintop;
 	fn->lcwn = winlctop;
 	fn->wnlen = sz;
@@ -1992,7 +2000,7 @@ winSlotCnt(struct msdosfs_winfn *fn, struct msdosfsmount *pmp)
 }
 
 int
-newwinfn(struct componentname *cnp, struct msdosfs_winfn **fnp,
+newwinfn(const char *name, size_t len, struct msdosfs_winfn **fnp,
     struct msdosfsmount *pmp)
 {
 	struct msdosfs_winfn *fn;
@@ -2001,20 +2009,20 @@ newwinfn(struct componentname *cnp, struct msdosfs_winfn **fnp,
 
 #if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
 	if (pmp->pm_flags & MSDOSFS_CONVERTFNAME)
-		return newwinfn_kiconv(cnp, fnp, pmp);
+		return newwinfn_kiconv(name, len, fnp, pmp);
 #endif
 
-	un = (const u_char *)cnp->cn_nameptr;
-	unlen = cnp->cn_namelen;
+	un = (const u_char *)name;
+	unlen = len;
 	for (un += unlen; unlen > 0; unlen--)
 		if (*--un != ' ' && *un != '.')
 			break;
 	if (unlen > WIN_MAXLEN)
 		return ENAMETOOLONG;
 
-	fn = malloc(sizeof(*fn), M_MSDOSFSTMP, M_WAITOK);
-	fn->un = (const u_char *)cnp->cn_nameptr;
-	fn->unlen = cnp->cn_namelen;
+	fn = MSDOSFSTMP_MALLOC(sizeof(*fn));
+	fn->un = (const u_char *)name;
+	fn->unlen = len;
 #if defined(_KERNEL) && !defined(_RUMPKERNEL) && !defined(_RUMP_NATIVE_ABI)
 	fn->wn = fn->lcwn = NULL;
 	fn->wnlen = 0;
@@ -2039,6 +2047,6 @@ freewinfn(struct msdosfs_winfn *fn, struct msdosfsmount *pmp)
 		if (fn->wcs)
 			WPNBUF_PUT(fn->wcs);
 #endif
-		free(fn, M_MSDOSFSTMP);
+		MSDOSFSTMP_FREE(fn);
 	}
 }

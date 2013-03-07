@@ -125,7 +125,7 @@ struct winentry {
 #if defined(_KERNEL) || defined(MAKEFS)
 struct dirent;
 struct msdosfs_winfn;
-
+struct msdosfsmount;
 void	unix2dostime(const struct timespec *tsp, int gmtoff, u_int16_t *ddp,
 	    u_int16_t *dtp, u_int8_t *dhp);
 void	dos2unixtime(u_int dd, u_int dt, u_int dh, int gmtoff,
@@ -142,7 +142,7 @@ int	win2unixfn(struct winentry *wep, struct dirent *dp, int chksum,
 	    struct msdosfsmount *pmp);
 u_int8_t winChksum(u_int8_t *name);
 int	winSlotCnt(struct msdosfs_winfn *fn, struct msdosfsmount *pmp);
-int	newwinfn(struct componentname *cnp, struct msdosfs_winfn **fnp,
+int	newwinfn(const char *name, size_t len, struct msdosfs_winfn **fnp,
 	    struct msdosfsmount *pmp);
 void	freewinfn(struct msdosfs_winfn *fn, struct msdosfsmount *pmp);
 int	msdosfs_initkiconv(struct msdosfsmount *pmp);

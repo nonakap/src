@@ -140,7 +140,7 @@ msdosfs_create(void *v)
 	 * use the absence of the owner write bit to make the file
 	 * readonly.
 	 */
-	if ((error = newwinfn(cnp, &fn, pmp)) != 0)
+	if ((error = newwinfn(cnp->cn_nameptr, cnp->cn_namelen, &fn, pmp)) != 0)
 		goto bad;
 	memset(&ndirent, 0, sizeof(ndirent));
 	if ((error = uniqdosname(pdep, fn, ndirent.de_Name)) != 0)
@@ -165,7 +165,8 @@ msdosfs_create(void *v)
 	return (0);
 
 bad:
-	freewinfn(fn, pmp);
+	if (fn != NULL)
+		freewinfn(fn, pmp);
 	fstrans_done(ap->a_dvp->v_mount);
 	vput(ap->a_dvp);
 	return (error);
@@ -999,7 +1000,7 @@ abortit:
 	 * into the denode and directory entry for the destination
 	 * file/directory.
 	 */
-	if ((error = newwinfn(tcnp, &tfn, pmp)) != 0)
+	if ((error = newwinfn(tcnp->cn_nameptr, tcnp->cn_namelen, &tfn, pmp)) != 0)
 		goto abortit;
 	if ((error = uniqdosname(VTODE(tdvp), tfn, toname)) != 0) {
 		fstrans_done(fdvp->v_mount);
@@ -1138,7 +1139,8 @@ bad:
 	vrele(fdvp);
 	vrele(fvp);
 out:
-	freewinfn(tfn, pmp);
+	if (tfn != NULL)
+		freewinfn(tfn, pmp);
 	fstrans_done(fdvp->v_mount);
 	return (error);
 
@@ -1268,7 +1270,7 @@ msdosfs_mkdir(void *v)
 	 * cluster.  This will be written to an empty slot in the parent
 	 * directory.
 	 */
-	if ((error = newwinfn(cnp, &fn, pmp)) != 0)
+	if ((error = newwinfn(cnp->cn_nameptr, cnp->cn_namelen, &fn, pmp)) != 0)
 		goto bad;
 	if ((error = uniqdosname(pdep, fn, ndirent.de_Name)) != 0)
 		goto bad;
