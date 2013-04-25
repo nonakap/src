@@ -1,0 +1,35 @@
+#	$NetBSD$
+
+S=	${.CURDIR}/../../../../../..
+
+NOMAN=		# defined
+
+LIBCRT0=	# nothing
+LIBCRTBEGIN=	# nothing
+LIBCRTEND=	# nothing
+LIBC=		# nothing
+
+.include <bsd.own.mk>
+
+STRIPFLAG=	# override
+
+SRCS?=		mbr.S
+
+BINDIR=		/usr/mdec/uarm
+BINMODE=	444
+
+.PATH:	${.CURDIR}/..
+
+LDFLAGS+=	-N -e start
+CPPFLAGS=	-nostdinc -I${.OBJDIR} -I${.CURDIR}/.. -I${S}
+CFLAGS=		-mcpu=xscale
+
+CLEANFILES+=	${PROG}.tmp
+
+${PROG}: ${OBJS}
+	${LD} -o ${PROG}.tmp ${LDFLAGS} -Ttext 0xa0000000 ${OBJS}
+	${OBJCOPY} -O binary ${PROG}.tmp ${PROG}
+	-rm -f ${PROG}.tmp
+
+.include <bsd.klinks.mk>
+.include <bsd.prog.mk>

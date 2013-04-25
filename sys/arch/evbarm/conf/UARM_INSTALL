@@ -1,0 +1,11 @@
+#	$NetBSD$
+#
+#	UARM_INSTALL -- UARM kernel with installation-sized ramdisk
+#
+
+include "arch/evbarm/conf/UARM"
+include "arch/evbarm/conf/INSTALL"
+
+options BOOTHOWTO=RB_SINGLE
+no config netbsd
+config netbsd root on ? type ?
