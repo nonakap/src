@@ -1,0 +1,59 @@
+include "arch/evbarm/conf/std.uarm"
+maxusers 8
+options CPU_XSCALE_PXA250
+makeoptions CPUFLAGS="-mcpu=xscale"
+options RTC_OFFSET=0
+options NTP
+options KTRACE
+options SYSVMSG
+options SYSVSEM
+options SYSVSHM
+options SYSCTL_INCLUDE_DESCR
+file-system FFS
+file-system MFS
+file-system FDESC
+file-system KERNFS
+file-system MSDOSFS
+file-system NULLFS
+file-system PROCFS
+file-system PTYFS
+file-system TMPFS
+file-system UNION
+options WAPBL
+options INET
+options INET6
+options COMPAT_60
+options COMPAT_43
+options COMPAT_BSDPTY
+options DIAGNOSTIC
+options DEBUG
+options LOCKDEBUG
+options DDB
+options DDB_ONPANIC=1
+options DDB_HISTORY_SIZE=100
+makeoptions DEBUG="-g"
+options SYMTAB_SPACE=750000
+config netbsd root on ld0a type ?
+mainbus0 at root
+cpu0 at mainbus?
+pxaip0 at mainbus?
+pxaintc0 at pxaip?
+pxagpio0 at pxaip?
+#options PXAGPIO_HAS_GPION_INTRS
+pxadmac0 at pxaip? addr 0x40000000 intr 25
+#options PXA2X0_DMAC_DMOVER_CONCURRENCY=4
+pxartc0 at pxaip? addr 0x40900000
+com0 at pxaip? addr 0x40100000 intr 22 # ffuart
+com1 at pxaip? addr 0x40200000 intr 21 # btuart
+com2 at pxaip? addr 0x40700000 intr 20 # stuart
+options COM_PXA2X0
+options FFUARTCONSOLE
+pvbus0 at mainbus?
+ld* at pvbus?
+pseudo-device vnd
+pseudo-device bpfilter
+pseudo-device loop
+pseudo-device pty
+pseudo-device clockctl
+pseudo-device ksyms
+pseudo-device drvctl

@@ -1,0 +1,25 @@
+#	$NetBSD$
+#
+# uARM
+#
+
+# uARM hypervisor call
+file	arch/evbarm/uarm/uarm_hypervisor.S
+
+# homegrown stuff since initarm_common seems dead
+file	arch/evbarm/uarm/uarm_machdep.c
+
+# CPU and I/O
+include	"arch/arm/xscale/files.pxa2x0"
+
+#
+# para-virtualization bus
+#
+define	uarmpvbus {}
+
+device	pvbus {}: uarmpvbus
+attach	pvbus at mainbus
+file	arch/evbarm/uarm/pvbus.c	pvbus
+
+attach	ld at pvbus with ld_pvbus
+file	arch/evbarm/uarm/ld_pvbus.c	ld_pvbus
