@@ -1187,6 +1187,7 @@ ieee80211_setup_rsn_ie(struct ieee80211com *ic, u_int8_t *ie)
 	/* optional capabilities */
 	ADDSHORT(frm, rsn->rsn_caps);
 	/* XXX PMKID */
+	ADDSHORT(frm, 0); /* no PMKID (PMKID Count=0) */
 
 	/* calculate element length */
 	ie[1] = frm - ie - 2;
@@ -1202,7 +1203,7 @@ ieee80211_setup_rsn_ie(struct ieee80211com *ic, u_int8_t *ie)
 /*
  * Add a WPA/RSN element to a frame.
  */
-static u_int8_t *
+u_int8_t *
 ieee80211_add_wpa(u_int8_t *frm, struct ieee80211com *ic)
 {
 

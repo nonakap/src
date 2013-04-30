@@ -92,6 +92,8 @@ int	ieee80211_iserp_rateset(struct ieee80211com *,
 void	ieee80211_set11gbasicrates(struct ieee80211_rateset *,
 		enum ieee80211_phymode);
 
+u_int8_t *ieee80211_add_wpa(u_int8_t *, struct ieee80211com *);
+
 /*
  * Return the size of the 802.11 header for a management or data frame.
  */

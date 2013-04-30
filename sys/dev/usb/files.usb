@@ -441,3 +441,8 @@ file	dev/usb/if_urtw.c		urtw
 device	run: ether, ifnet, arp, wlan, firmload
 attach	run at usbdevif
 file	dev/usb/if_run.c		run
+
+# Realtek RTL8188SU/RTL8191SU
+device	ursu: ether, ifnet, arp, wlan, firmload
+attach	ursu at usbdevif
+file	dev/usb/if_ursu.c		ursu
